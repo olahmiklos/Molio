@@ -1,0 +1,9 @@
+// Az adatmodell a specifikáció alapján készül el. Egyelőre csak a kapcsolat van beállítva.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
