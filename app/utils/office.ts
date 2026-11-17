@@ -1,4 +1,4 @@
-// Rendelői adminisztráció (spec v2.0): kontroll-meghívók (recall), közérthető páciens-tájékoztató,
+// Rendelői adminisztráció (spec v2.0, 2.4–2.9): kontroll-meghívók (recall), közérthető páciens-tájékoztató,
 // beleegyező nyilatkozat sablonjai, EESZT-jelentés (szemléltetés), számla előkészítése, sterilizálás.
 import { addDays, addMonths, dayDiff, fmtDate, fmtLong, today } from './dates'
 import type { DB, Patient, TreatmentRecord } from './types'

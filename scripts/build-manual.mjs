@@ -1,4 +1,4 @@
-// Felhasználói kézikönyv PDF-ben a docs/kezikonyv.md-ből (spec v2.0, 2.9).
+// Felhasználói kézikönyv PDF-ben a docs/kezikonyv.md-ből (spec v2.0, 2.10).
 // A buildkor fut (nuxt.config.ts → build:before hook, illetve `npm run manual`), így a kézikönyv minden
 // kiadással frissül: az éles (main) oldalon akkor, amikor új verzió kerül a main ágra.
 // Kimenet: public/kezikonyv/Molio_felhasznaloi_kezikonyv.pdf és public/kezikonyv/meta.json (nincs verziókezelve).

@@ -172,9 +172,9 @@ model TreatmentType {
   notAfter     String[]        @map("not_after")
   color        String
   statusAfter  String?         @map("status_after")
-  /// kontroll-meghívó ennyi hónap múlva (v2.0, 2.1.4)
+  /// kontroll-meghívó ennyi hónap múlva (v2.0, 2.4)
   recallMonths Int?            @map("recall_months")
-  /// beleegyező nyilatkozat sablonja (v2.0, 2.2.8)
+  /// beleegyező nyilatkozat sablonja (v2.0, 2.6)
   consentTpl   String?         @map("consent_tpl")
   packageLines PackageLine[]
   createdAt    DateTime        @default(now()) @db.Timestamptz
@@ -242,11 +242,11 @@ model Visit {
   approvedAt    DateTime?       @map("approved_at") @db.Timestamptz
   /// a használt műszercsomag sterilizálási tétele (v2.0, 2.5)
   sterBatch     String?         @map("ster_batch")
-  /// EESZT-jelentés (v2.0, 2.7)
+  /// EESZT-jelentés (v2.0, 2.8)
   eesztStatus   String?         @map("eeszt_status")
   eesztRef      String?         @map("eeszt_ref")
   eesztSentAt   DateTime?       @map("eeszt_sent_at") @db.Timestamptz
-  /// közérthető páciens-tájékoztató: csak orvosi jóváhagyás után küldhető (v2.0, 2.2.9)
+  /// közérthető páciens-tájékoztató: csak orvosi jóváhagyás után küldhető (v2.0, 2.7)
   infoText      String?         @map("info_text")
   infoStatus    String?         @map("info_status")
   infoApprovedById String?      @map("info_approved_by_id") @db.Uuid

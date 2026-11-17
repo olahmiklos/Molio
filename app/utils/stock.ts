@@ -1,4 +1,4 @@
-// Raktári könyvelés (spec v2.0, 2.3.3–2.3.6): gördülő súlyozott átlagár, gyártási tételek (LOT) lejárat szerinti
+// Raktári könyvelés (spec v2.0, 2.3.3–2.3.5): gördülő súlyozott átlagár, gyártási tételek (LOT) lejárat szerinti
 // kiadása, lejáró tételek, rendelési javaslat, LOT-keresés (visszahívás). Tiszta függvények, a store-ok és a seed is ezt használja.
 import { addDays, dayDiff, today, uid } from './dates'
 import type { DB, Item, Lot, LotUse, Movement } from './types'

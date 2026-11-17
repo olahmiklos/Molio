@@ -46,7 +46,7 @@ export default defineNuxtConfig({
     },
   },
   hooks: {
-    // a felhasználói kézikönyv PDF minden buildnél újra elkészül a docs/kezikonyv.md-ből (spec v2.0, 2.9)
+    // a felhasználói kézikönyv PDF minden buildnél újra elkészül a docs/kezikonyv.md-ből (spec v2.0, 2.10)
     'build:before': async () => {
       const { buildManual } = await import('./scripts/build-manual.mjs')
       await buildManual()
