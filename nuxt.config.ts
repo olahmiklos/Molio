@@ -46,6 +46,8 @@ export default defineNuxtConfig({
     },
   },
   nitro: {
+    // statikus kimenet (Cloudflare buildkörnyezetben is): ne szerver-függvényt építsen
+    preset: 'static',
     prerender: { routes: ['/'] },
   },
   pwa: {
