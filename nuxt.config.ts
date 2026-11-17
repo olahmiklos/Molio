@@ -81,7 +81,8 @@ export default defineNuxtConfig({
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
       cleanupOutdatedCaches: true,
     },
-    client: { installPrompt: false },
+    // 5 percenként és az alkalmazás előtérbe kerülésekor új verziót keres (a layout magától frissít, ha nincs folyamatban lévő munka)
+    client: { installPrompt: false, periodicSyncForUpdates: 300 },
     devOptions: { enabled: false },
   },
 })

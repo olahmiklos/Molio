@@ -20,7 +20,7 @@ A Molio fogorvosi rendelőkezelő program. Célja, hogy a fogorvosnak és az ass
 
 Firefoxban a beépített beszédfelismerés nem érhető el, ott a kezelés leírása begépelhető.
 
-A Molio alkalmazásként is telepíthető. iPhone-on és iPaden: Safari → Megosztás → Főképernyőhöz adás. Androidon és asztali Chrome-ban: menü → Alkalmazás telepítése. Ha új verzió jelenik meg, a program felül jelzi; az „Újratöltés most” gombbal frissíthető.
+A Molio alkalmazásként is telepíthető. iPhone-on és iPaden: Safari → Megosztás → Főképernyőhöz adás. Androidon és asztali Chrome-ban: menü → Alkalmazás telepítése. Ha új verzió jelenik meg, a program magától frissül. Ha éppen kezelés van folyamatban vagy egy ablak nyitva van, megvárja a végét; addig felül sáv jelzi, és az „Újratöltés most” gombbal azonnal is frissíthető.
 
 # A felület
 
