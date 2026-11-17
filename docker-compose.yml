@@ -1,5 +1,12 @@
-# Helyi fejlesztői Postgres: `docker compose up -d db`
+# Helyi futtatás egy paranccsal: `docker compose up -d`
+#  - app: a Molio (1.0 demó, böngészős tárolással) → http://localhost:8080
+#  - db:  PostgreSQL a végleges rendszerhez (a demó még nem használja)
 services:
+  app:
+    build: .
+    ports:
+      - "8080:80"
+    restart: unless-stopped
   db:
     image: postgres:16
     environment:
