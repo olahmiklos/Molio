@@ -22,13 +22,30 @@ const nav = [
   { to: '/beallitasok', label: 'Beállítások', short: 'Beáll.', icon: 'gear', match: (p: string) => p.startsWith('/beallitasok') || p.startsWith('/nevjegy') || p.startsWith('/sugo') },
 ]
 
-// PWA: új verzió esetén a felhasználó dönt az újratöltésről
+// PWA: új verzió esetén a program magától frissít, hogy senki ne ragadjon egy régi verzióban.
+// Ha éppen folyamatban lévő kezelés vagy nyitott ablak van, megvárja a végét (addig a sáv kínálja a kézi újratöltést).
 const { $pwa } = useNuxtApp() as any
-watch(() => $pwa?.needRefresh, v => { if (v) ui.setUpdate(() => $pwa.updateServiceWorker(true)) }, { immediate: true })
+const busy = computed(() => tx.active || ui.modals.length > 0 || !!ui.confirmState)
+// az új service worker aktiválása; ha a lapot még nem ő vezérli (első látogatás), nincs controllerchange, ezért biztonsági újratöltés
+function applyUpdate() {
+  $pwa.updateServiceWorker(true)
+  setTimeout(() => window.location.reload(), 2500)
+}
+function tryAutoUpdate() {
+  if (!$pwa?.needRefresh) return
+  if (busy.value) { ui.setUpdate(applyUpdate); return }
+  applyUpdate()
+}
+watch(() => $pwa?.needRefresh, tryAutoUpdate, { immediate: true })
+watch(busy, b => { if (!b) tryAutoUpdate() })
 
 onMounted(() => {
   const set = () => { ui.online = navigator.onLine }
   set(); window.addEventListener('online', set); window.addEventListener('offline', set)
+  // előtérbe kerüléskor azonnal keres új verziót (telefonon, tableten a háttérből visszatérve)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => {})
+  })
   window.addEventListener('keydown', e => { if (e.key === 'Escape') { if (ui.confirmState) ui.answer(false); else ui.close() } })
 })
 </script>
@@ -61,7 +78,7 @@ onMounted(() => {
       ⚠ {{ inv.alerts.length }} anyagot szükséges megrendelni: {{ inv.alerts.map(i => i.name).join(', ') }} – megnyitás a Raktárban →
     </NuxtLink>
     <div v-if="ui.updateAvailable" class="hint" style="margin:0;border-radius:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <b>Új verzió érhető el.</b><span>Az újratöltés után a frissített program fut.</span>
+      <b>Új verzió érhető el.</b><span>A folyamatban lévő munka befejezése után magától frissül, vagy most is újratöltheted.</span>
       <button class="btn sm pri" @click="ui.applyUpdate()">Újratöltés most</button>
       <button class="btn sm" @click="ui.updateAvailable = false">Később</button>
     </div>
