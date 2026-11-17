@@ -5,5 +5,7 @@
   "assets": {
     "directory": ".output/public",
     "not_found_handling": "single-page-application"
-  }
+  },
+  // előnézeti (nem éles) ágak buildjéhez: `wrangler preview` ezt a blokkot várja
+  "previews": {}
 }
