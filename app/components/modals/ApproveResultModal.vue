@@ -5,8 +5,9 @@ import { usePatientStore } from '~/stores/patient'
 import { useUiStore } from '~/stores/ui'
 import { STATUS_STYLE } from '~/utils/defaults'
 import { toothLabel } from '~/utils/teeth'
+import PatientInfoModal from './PatientInfoModal.vue'
 
-const props = defineProps<{ warns: { level: 'err' | 'warn'; text: string }[]; statusOffer: Record<string, string[]>; patientId: string }>()
+const props = defineProps<{ warns: { level: 'err' | 'warn'; text: string }[]; statusOffer: Record<string, string[]>; patientId: string; recordId?: string; hasInfo?: boolean }>()
 const patients = usePatientStore()
 const ui = useUiStore()
 const chosen = ref<string[]>(Object.keys(props.statusOffer))
@@ -25,6 +26,10 @@ function applyStatus() {
       <h3>Készletfigyelmeztetés</h3>
       <div v-for="(w, i) in warns" :key="i" :class="w.level">{{ w.text }}</div>
     </template>
+    <div v-if="hasInfo && recordId" class="ai-note row" style="margin:0 0 10px">
+      <span><b>Elkészült a páciens-tájékoztató vázlata.</b> Átnézés és orvosi jóváhagyás után küldhető ki.</span>
+      <button class="btn sm pri" @click="ui.close(); ui.open(PatientInfoModal, { recordId })">Megnyitás</button>
+    </div>
     <template v-if="Object.keys(statusOffer).length">
       <h3 style="margin-top:12px">Frissíted az érintett fogak státuszát?</h3>
       <div class="row">

@@ -7,6 +7,9 @@ import { addDays, DAYS, dow, fmtDate, fmtDT, fmtFt, fmtShort, today } from '~/ut
 import { doctorName, typeNames } from '~/utils/logic'
 import AppointmentModal from '~/components/modals/AppointmentModal.vue'
 import MessageModal from '~/components/modals/MessageModal.vue'
+import BookingModal from '~/components/modals/BookingModal.vue'
+import { useOfficeStore } from '~/stores/office'
+import { recallText } from '~/utils/office'
 
 const data = useDataStore()
 const ap = useAppointmentStore()
@@ -16,12 +19,62 @@ const list = computed(() => ap.weekList)
 const atRisk = computed(() => list.value.reduce((s, x) => s + x.price * x.rk.p, 0))
 const high = computed(() => list.value.filter(x => x.rk.level === 'high'))
 const pat = (id: string) => db.value.patients.find(p => p.id === id)
+const office = useOfficeStore()
+const route = useRoute()
+const tab = ref<'appt' | 'recall'>(route.query.tab === 'recall' ? 'recall' : 'appt')
+watch(() => route.query.tab, v => { tab.value = v === 'recall' ? 'recall' : 'appt' })
+const showBooked = ref(false)
+const recalls = computed(() => office.recalls.filter(r => showBooked.value || !r.booked))
+const preview = ref<string | null>(null)
+const STATE: Record<string, [string, string]> = { overdue: ['lejárt', 'b-red'], due: ['esedékes', 'b-yellow'], soon: ['hamarosan', 'b-gray'] }
+function inviteIt(r: (typeof office.recalls)[number]) {
+  const ch = [r.patient.remind.sms || !r.patient.email ? 'SMS' : '', r.patient.email && r.patient.remind.email ? 'e-mail' : ''].filter(Boolean)
+  office.invite(r.patient.id, r.typeId, ch.length ? ch : ['SMS'])
+  ui.toast(`Meghívó elküldve (szimulált): ${r.patient.name}`)
+}
 function confirmIt(id: string) { ap.toggleConfirm(id); ui.toast(ap.byId(id)?.confirmed ? 'Visszaigazolva – a kockázat csökkent' : 'Visszaigazolás törölve') }
 </script>
 
 <template>
   <div>
-    <div class="pagehead"><h1>Emlékeztetők és kockázat</h1><span class="muted">{{ fmtDate(today()) }} – {{ fmtDate(addDays(today(), 7)) }}</span></div>
+    <div class="pagehead"><h1>Emlékeztetők</h1><span v-if="tab === 'appt'" class="muted">{{ fmtDate(today()) }} – {{ fmtDate(addDays(today(), 7)) }}</span>
+      <div class="spacer" />
+      <div class="seg"><button :class="{ on: tab === 'appt' }" @click="tab = 'appt'">Időpontok és kockázat</button><button :class="{ on: tab === 'recall' }" @click="tab = 'recall'">Kontroll-meghívók ({{ office.recalls.filter(r => !r.booked).length }})</button></div>
+    </div>
+    <template v-if="tab === 'recall'">
+      <div class="hint">
+        A program figyeli, kinél esedékes a rendszeres kontroll: <b>fogkő-eltávolítás 6 havonta, állapotfelmérés évente</b> (kezeléstípusonként a Beállítások / Kezelési csomagok lapon állítható).
+        Az esedékesség a legutóbbi ilyen kezelés dátumából számolódik; akinek már van ilyen időpontja, az alapból nem látszik. A meghívó a demóban nem megy ki, csak szimulált.
+      </div>
+      <div class="row" style="margin-bottom:10px"><label class="switch" :class="{ on: showBooked }" @click.prevent="showBooked = !showBooked"><i />a már foglalt időpontúak is</label></div>
+      <div class="card flush scroll-x">
+        <table class="t">
+          <thead><tr><th>Esedékes</th><th>Páciens</th><th>Kontroll</th><th class="hide-m">Legutóbb</th><th>Állapot</th><th /></tr></thead>
+          <tbody>
+            <tr v-for="r in recalls" :key="r.patient.id + r.typeId">
+              <td class="nowrap"><b>{{ fmtDate(r.due) }}</b><div class="small muted">{{ r.days < 0 ? `${-r.days} napja` : r.days === 0 ? 'ma' : `${r.days} nap múlva` }}</div></td>
+              <td><NuxtLink :to="`/paciensek/${r.patient.id}`"><b>{{ r.patient.name }}</b></NuxtLink><div class="small muted">{{ r.patient.phone }}</div></td>
+              <td class="small">{{ r.typeName }}</td>
+              <td class="hide-m nowrap">{{ fmtDate(r.last) }}</td>
+              <td>
+                <span v-if="r.booked" class="badge b-green">időpontja van: {{ fmtDate(r.booked) }}</span>
+                <template v-else><span class="badge" :class="STATE[r.state]![1]">{{ STATE[r.state]![0] }}</span><div v-if="r.invitedAt" class="small muted" style="margin-top:3px">meghívva: {{ fmtDate(r.invitedAt) }}</div></template>
+              </td>
+              <td class="nowrap">
+                <template v-if="!r.booked">
+                  <button class="btn sm" @click="preview = preview === r.patient.id + r.typeId ? null : r.patient.id + r.typeId">Üzenet</button>
+                  <button class="btn sm" :class="{ pri: !r.invitedAt }" style="margin-left:4px" @click="inviteIt(r)">{{ r.invitedAt ? 'Újra' : 'Meghívó' }}</button>
+                  <button class="btn sm go" style="margin-left:4px" @click="ui.open(BookingModal, { patientId: r.patient.id, typeId: r.typeId })">Időpont</button>
+                  <div v-if="preview === r.patient.id + r.typeId" class="sms" style="margin-top:8px;white-space:normal">{{ recallText(db, r) }}</div>
+                </template>
+              </td>
+            </tr>
+            <tr v-if="!recalls.length"><td colspan="6" class="muted">Nincs esedékes kontroll a következő 45 napban.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+    <template v-else>
     <div class="kpis">
       <div class="kpi"><div class="kv-v" style="color:var(--green)">{{ list.length }}</div><div class="kv-l">időpont a következő 7 napban</div></div>
       <div class="kpi"><div class="kv-v" style="color:var(--blue)">{{ list.filter(x => x.ri.ch.length).length }}</div><div class="kv-l">kér emlékeztetőt</div></div>
@@ -55,5 +108,6 @@ function confirmIt(id: string) { ap.toggleConfirm(id); ui.toast(ap.byId(id)?.con
         </tbody>
       </table>
     </div>
+    </template>
   </div>
 </template>

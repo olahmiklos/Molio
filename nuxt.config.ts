@@ -45,6 +45,13 @@ export default defineNuxtConfig({
       dataSource: 'browser',
     },
   },
+  hooks: {
+    // a felhasználói kézikönyv PDF minden buildnél újra elkészül a docs/kezikonyv.md-ből (spec v2.0, 2.9)
+    'build:before': async () => {
+      const { buildManual } = await import('./scripts/build-manual.mjs')
+      await buildManual()
+    },
+  },
   nitro: {
     // statikus kimenet (Cloudflare buildkörnyezetben is): ne szerver-függvényt építsen
     preset: 'static',

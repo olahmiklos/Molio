@@ -14,12 +14,16 @@ import { ATT_ACCEPT, DOC_TYPES, STATUS_STYLE } from '~/utils/defaults'
 import AttachmentViewer from '~/components/modals/AttachmentViewer.vue'
 import ApproveResultModal from '~/components/modals/ApproveResultModal.vue'
 import StatusToothModal from '~/components/modals/StatusToothModal.vue'
+import ConsentModal from '~/components/modals/ConsentModal.vue'
+import { useOfficeStore } from '~/stores/office'
+import { fmtDate, fmtPrice } from '~/utils/dates'
 
 const data = useDataStore()
 const tx = useTreatmentStore()
 const voice = useVoiceStore()
 const ui = useUiStore()
 const ap = useAppointmentStore()
+const office = useOfficeStore()
 const db = computed(() => data.db)
 const s = computed(() => tx.s)
 const p = computed(() => tx.patient)
@@ -36,7 +40,7 @@ const SAMPLES = [
 const STATUS_SAMPLE = '18-as és 28-as hiányzik, 16-os korona, 36-os tömött, 46-os gyökérkezelt és koronás, 13-tól 23-ig ép, a többi ép.'
 const STATUS_SAMPLE_PRIMARY = '55-ös szuvas, 64-es tömött, jobb alsó római négyes tömött, a többi ép.'
 
-const open = reactive({ dict: false, type: false, mats: false, att: false, sum: false, status: true })
+const open = reactive({ dict: false, type: false, mats: false, att: false, sum: false, status: true, ster: false, consent: false })
 const dtText = computed({ get: () => s.value?.text || '', set: v => tx.setText(v) })
 const stText = computed({ get: () => s.value?.statusText || '', set: v => tx.setStatusText(v) })
 
@@ -98,7 +102,7 @@ function approve() {
   if (!res) return
   if ('error' in res) { ui.toast(res.error!); return }
   ui.toast('Kezelés mentve, anyagok levonva')
-  if (res.warns.length || Object.keys(res.statusOffer).length) ui.open(ApproveResultModal, { ...res })
+  if (res.warns.length || Object.keys(res.statusOffer).length || res.hasInfo) ui.open(ApproveResultModal, { ...res })
   navigateTo(`/paciensek/${res.patientId}`)
 }
 function startStatus() { voice.stop(); tx.setMode('status'); open.status = true }
@@ -145,7 +149,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
       </button>
     </div>
     <div class="ai-note">
-      <b>1.0 verzió:</b> csak szövegfelismerés – a program a böngésző beszédfelismerésével alakítja szöveggé a diktálást, és szabályok alapján tölti ki a mezőket.
+      <b>Demó (2.0):</b> csak szövegfelismerés – a program a böngésző beszédfelismerésével alakítja szöveggé a diktálást, és szabályok alapján tölti ki a mezőket.
       A mesterséges intelligenciával készülő összefoglaló a későbbi verziókban lesz elérhető. Csak kitalált adatot diktálj: a böngésző a hangot a szolgáltatója szerverére küldheti.
       <span v-if="!voice.supported"><br><b>Ez a böngésző nem támogatja a diktálást</b> – gépeld be a szöveget (Chrome, Edge vagy Safari ajánlott).</span>
     </div>
@@ -235,7 +239,8 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
               <tbody>
                 <tr v-for="r in tx.rows" :key="r.id" :class="[`st-${r.st}`, { off: !r.checked }]">
                   <td><input type="checkbox" :checked="r.checked" @change="tx.setChecked(r.id, ($event.target as HTMLInputElement).checked)"></td>
-                  <td><b>{{ db.items.find(i => i.id === r.id)?.name }}</b><div class="small muted">{{ db.items.find(i => i.id === r.id)?.group }}</div></td>
+                  <td><b>{{ db.items.find(i => i.id === r.id)?.name }}</b><div class="small muted">{{ db.items.find(i => i.id === r.id)?.group }}</div>
+                    <div v-for="l in (r.checked ? tx.lotPreview(r.id, r.qty) : [])" :key="l.lot" class="small" :style="l.expiry && l.expiry < today() ? 'color:var(--red);font-weight:700' : 'color:var(--blue-d)'">LOT {{ l.lot }} · lejár: {{ l.expiry ? fmtDate(l.expiry) : '–' }}{{ l.expiry && l.expiry < today() ? ' – LEJÁRT!' : '' }}{{ tx.lotPreview(r.id, r.qty).length > 1 ? ` (${l.qty})` : '' }}</div></td>
                   <td class="hide-m">{{ r.pk ? `${r.pk} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}</td>
                   <td class="hide-m">{{ r.dq !== undefined ? `${r.dq} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}</td>
                   <td class="nowrap"><input class="q" type="number" min="0" step="1" :value="r.qty" @change="tx.setQty(r.id, Number(($event.target as HTMLInputElement).value))"> {{ db.items.find(i => i.id === r.id)?.unit }}
@@ -258,6 +263,36 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
               <optgroup v-for="g in groups" :key="g" :label="g"><option v-for="i in db.items.filter(x => x.group === g && !present.has(x.id))" :key="i.id" :value="i.id">{{ i.name }} ({{ i.unit }})</option></optgroup>
             </select>
             <span class="small muted">Sárga = ellenőrizendő eltérés · halvány = csak a csomagból javasolt. Jóváhagyáskor a tételek levonódnak a raktárból.</span>
+          </div>
+        </div>
+      </details>
+
+      <!-- műszercsomag (sterilizálás) -->
+      <details class="grp" :class="{ flag: !s.sterBatch }" :open="open.ster" @toggle="open.ster = ($event.target as HTMLDetailsElement).open">
+        <summary><span class="gi" style="background:#64748b">♨</span><span class="gt">Sterilizált műszercsomag</span><span class="gs">{{ s.sterBatch ? 'tétel: ' + s.sterBatch : 'nincs kiválasztva' }}</span><span class="chev">▾</span></summary>
+        <div class="gb">
+          <div v-if="!office.bdToday" class="warn" style="margin-top:0">Ma még nincs rögzítve Bowie–Dick-teszt a sterilizációs naplóban. <NuxtLink to="/sterilizalas">Napló megnyitása</NuxtLink></div>
+          <div class="row">
+            <select v-model="s.sterBatch" class="inp auto" style="min-width:280px">
+              <option :value="null">– nincs megadva –</option>
+              <option v-for="c in office.batches" :key="c.id" :value="c.batch">{{ c.batch }} · {{ fmtDate(c.date) }} {{ c.time }} · {{ c.program.split('·')[0] }}</option>
+            </select>
+            <span class="small muted">A kezeléshez használt műszercsomag sterilizálási tétele kerül a kartonba; sikertelen ciklusnál így visszakereshető, kiknél használták.</span>
+          </div>
+        </div>
+      </details>
+
+      <!-- beleegyező nyilatkozat -->
+      <details class="grp" :open="open.consent" @toggle="open.consent = ($event.target as HTMLDetailsElement).open">
+        <summary><span class="gi" style="background:var(--gold)">✍</span><span class="gt">Beleegyező nyilatkozat</span><span class="gs">{{ tx.consents.length ? `${tx.consents.length} aláírva` : 'nincs aláírva' }}</span><span class="chev">▾</span></summary>
+        <div class="gb">
+          <div v-for="c in tx.consents" :key="c.id" class="row small" style="padding:6px 0;border-bottom:1px solid #eef1f3">
+            <span class="badge b-green">✓ aláírva</span><b>{{ c.title }}</b><span class="muted">{{ new Date(c.signedAt).toLocaleString('hu-HU') }}</span>
+            <div class="spacer" /><button class="btn sm" @click="ui.open(AttachmentViewer, { id: c.attachmentId })">PDF megnyitása</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="btn pri" :disabled="!s.types.length" @click="ui.open(ConsentModal, { patientId: p.id, sessKey: s.key, recordId: s.recordId, typeIds: [...s.types], teeth: [...s.teeth], doctorId: s.doctorId })">✍ Nyilatkozat aláíratása tableten</button>
+            <span class="small muted">{{ s.types.length ? 'A szöveget a program a kiválasztott kezelésből és fogakból készíti elő.' : 'Előbb válaszd ki vagy diktáld a kezelést.' }}</span>
           </div>
         </div>
       </details>
@@ -290,6 +325,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
         <button class="btn" @click="cancel">Mégse</button>
         <div class="spacer" />
         <span class="small muted hide-m">Jóváhagyáskor a kartonba kerül, az anyagok levonódnak a raktárból.</span>
+        <span class="small muted" :title="'Anyagköltség átlagáron: ' + fmtPrice(tx.cost)">anyag: {{ fmtFt(tx.cost) }}</span>
         <span class="fee">{{ fmtFt(tx.fee) }}</span>
         <button class="btn go" @click="approve"><AppIcon name="check" :size="16" />Jóváhagyás és mentés</button>
       </div>

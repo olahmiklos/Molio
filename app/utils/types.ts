@@ -52,7 +52,17 @@ export interface Item {
   supplier: string
   kw: string[]
   generic: boolean
+  /** gyártási szám (LOT) és lejárat nyilvántartása kötelező */
+  lotTracked?: boolean
+  /** implantátum: a beültetett darab LOT-ja a páciens kartonjába kerül */
+  implant?: boolean
+  /** a legutóbbi bevételezés egységára (a `price` a gördülő súlyozott átlagár) */
+  lastPrice?: number
 }
+
+/** gyártási tétel (LOT) a raktárban: a kiadás lejárat szerint történik (ami előbb lejár, az fogy előbb) */
+export interface Lot { id: string; item: string; lot: string; expiry: string; qty: number; received: string; unitPrice: number }
+export interface LotUse { lot: string; expiry: string; qty: number }
 
 export interface PackageLine { item: string; qty: number; per: PerMode }
 
@@ -71,6 +81,10 @@ export interface TreatmentType {
   color: string
   /** a jóváhagyás után felajánlott fogállapot */
   statusAfter?: string | null
+  /** kontroll-meghívó (recall) ennyi hónap múlva; 0 / üres = nincs */
+  recallMonths?: number
+  /** beleegyező nyilatkozat sablonja (CONSENT_TPL kulcsa) */
+  consent?: string
 }
 
 export interface RemindChoice { sms: boolean; email: boolean; timing?: NotifySettings['timing'] }
@@ -115,7 +129,7 @@ export interface Appointment {
   planned?: Planned | null
 }
 
-export interface MaterialUse { item: string; qty: number }
+export interface MaterialUse { item: string; qty: number; lots?: LotUse[]; cost?: number }
 
 export interface TreatmentRecord {
   id: string
@@ -132,6 +146,21 @@ export interface TreatmentRecord {
   text: string
   materials: MaterialUse[]
   fee: number
+  /** sterilizálási tétel (műszercsomag) azonosítója */
+  sterBatch?: string | null
+  /** EESZT-jelentés állapota (a demóban szimulált) */
+  eeszt?: { status: 'pending' | 'sent'; sentAt?: string; ref?: string }
+  /** közérthető tájékoztató a páciensnek – csak orvosi jóváhagyás után küldhető */
+  patientInfo?: PatientInfo
+}
+
+export interface PatientInfo {
+  text: string
+  status: 'draft' | 'approved' | 'sent'
+  approvedBy?: string
+  approvedAt?: string
+  sentAt?: string
+  channels?: string[]
 }
 
 export interface StatusSnapshot {
@@ -151,6 +180,12 @@ export interface Movement {
   recordId?: string
   patientId?: string
   note: string
+  /** bevételezésnél: egységár és a bevételezés utáni átlagár */
+  unitPrice?: number
+  avgAfter?: number
+  lot?: string
+  expiry?: string
+  lots?: LotUse[]
 }
 
 export interface Attachment {
@@ -174,6 +209,66 @@ export interface AttendanceEvent {
   min: number
 }
 
+/** sterilizációs ciklus (autokláv) */
+export interface SterCycle {
+  id: string
+  date: string
+  time: string
+  device: string
+  program: string
+  batch: string
+  operator: string
+  packs: number
+  contents: string
+  chem: boolean
+  bowieDick: boolean | null
+  bio: boolean | null
+  ok: boolean
+  note: string
+}
+
+/** megrendelés: a program javasolja, de mindig munkatárs adja le */
+export interface Order {
+  id: string
+  date: string
+  supplier: string
+  lines: { item: string; qty: number }[]
+  orderedBy: string
+  status: 'ordered' | 'received'
+  note: string
+}
+
+export interface RecallInvite { id: string; patientId: string; typeId: string; date: string; channels: string[] }
+
+export interface Consent {
+  id: string
+  patientId: string
+  recordId: string | null
+  sessKey: string | null
+  typeIds: string[]
+  teeth: number[]
+  title: string
+  text: string
+  doctorId: string
+  signedAt: string
+  attachmentId: string
+}
+
+export interface InvoiceLine { name: string; qty: number; price: number }
+export interface Invoice {
+  id: string
+  no: string
+  date: string
+  patientId: string
+  recordIds: string[]
+  payerName: string
+  payerAddress: string
+  method: 'cash' | 'card' | 'transfer' | 'fund'
+  fund: string
+  lines: InvoiceLine[]
+  total: number
+}
+
 export interface DB {
   version: number
   seededAt: string
@@ -190,4 +285,10 @@ export interface DB {
   movements: Movement[]
   attachments: Attachment[]
   events: AttendanceEvent[]
+  lots: Lot[]
+  orders: Order[]
+  sterCycles: SterCycle[]
+  recallInvites: RecallInvite[]
+  consents: Consent[]
+  invoices: Invoice[]
 }

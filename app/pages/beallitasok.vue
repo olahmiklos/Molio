@@ -4,10 +4,11 @@ import { useDataStore } from '~/stores/data'
 import { useInventoryStore } from '~/stores/inventory'
 import { useUiStore } from '~/stores/ui'
 import { useTreatmentStore } from '~/stores/treatment'
-import { fmtDate, fmtFt, parseKw, today } from '~/utils/dates'
+import { fmtDate, fmtFt, fmtPrice, parseKw, today } from '~/utils/dates'
 import { defaultNotify } from '~/utils/defaults'
 import { fillTpl, futureAppts } from '~/utils/logic'
 import { APP_VERSION, SPEC } from '~/utils/meta'
+import { CONSENT_TPL } from '~/utils/office'
 import ItemModal from '~/components/modals/ItemModal.vue'
 import NewItemModal from '~/components/modals/NewItemModal.vue'
 
@@ -17,7 +18,7 @@ const ui = useUiStore()
 const tx = useTreatmentStore()
 const db = computed(() => data.db)
 const st = computed(() => db.value.settings)
-const tab = ref<'clinic' | 'notify' | 'pkg' | 'master'>('clinic')
+const tab = ref<'clinic' | 'notify' | 'pkg' | 'master' | 'integr'>('clinic')
 const pkgSel = ref(db.value.types[0]?.id || '')
 const t = computed(() => db.value.types.find(x => x.id === pkgSel.value))
 const hours = Array.from({ length: 17 }, (_, i) => i + 6)
@@ -63,11 +64,12 @@ async function resetDemo() {
         <button :class="{ on: tab === 'notify' }" @click="tab = 'notify'">Értesítések</button>
         <button :class="{ on: tab === 'pkg' }" @click="tab = 'pkg'">Kezelési csomagok</button>
         <button :class="{ on: tab === 'master' }" @click="tab = 'master'">Anyag-törzsadatok</button>
+        <button :class="{ on: tab === 'integr' }" @click="tab = 'integr'">Kapcsolatok</button>
       </div>
     </div>
 
     <div class="ai-note">
-      <b>Molio 1.0 – bemutató verzió:</b> ez a verzió csak szövegfelismerést tartalmaz (a böngésző beépített magyar beszédfelismerése és szabályalapú értelmezés).
+      <b>Molio 2.0 – bemutató verzió:</b> a diktálásnál ez a verzió csak szövegfelismerést tartalmaz (a böngésző beépített magyar beszédfelismerése és szabályalapú értelmezés).
       A mesterséges intelligenciával készülő összefoglaló, a pontosabb AI-strukturálás és a hozzá tartozó kulcskezelés a későbbi verziókban lesz elérhető; a demóban nincs AI-kapcsolat és nem kell API-kulcsot megadni.
     </div>
 
@@ -91,7 +93,7 @@ async function resetDemo() {
       <div class="card">
         <h2>Demó adatai</h2>
         <p class="muted" style="margin-top:0">A mintaadatok {{ fmtDate(db.seededAt) }}-án készültek ehhez a böngészőhöz. Az adatok csak ezen az eszközön és ebben a böngészőben tárolódnak.</p>
-        <div class="row"><button class="btn danger" @click="resetDemo">Visszaállítás alaphelyzetbe</button><NuxtLink to="/nevjegy" class="btn">Névjegy és verzió</NuxtLink><span class="small muted">Molio {{ APP_VERSION }} · {{ SPEC.title }}</span></div>
+        <div class="row"><button class="btn danger" @click="resetDemo">Visszaállítás alaphelyzetbe</button><NuxtLink to="/nevjegy" class="btn">Névjegy és verzió</NuxtLink><NuxtLink to="/sugo" class="btn">Kézikönyv (PDF)</NuxtLink><span class="small muted">Molio {{ APP_VERSION }} · {{ SPEC.title }}</span></div>
       </div>
     </template>
 
@@ -151,6 +153,8 @@ async function resetDemo() {
               <div class="field"><label class="f">2 felszín (Ft)</label><input v-model.number="t.priceBySurf[1]" class="inp" type="number" step="1000" @change="saved"></div>
               <div class="field"><label class="f">3 vagy több felszín (Ft)</label><input v-model.number="t.priceBySurf[2]" class="inp" type="number" step="1000" @change="saved"></div>
             </template>
+            <div class="field"><label class="f">Kontroll-meghívó (recall)</label><select v-model.number="t.recallMonths" class="inp" @change="saved"><option :value="0">nincs</option><option v-for="m in [3, 4, 6, 9, 12, 18, 24]" :key="m" :value="m">{{ m }} hónap múlva</option></select></div>
+            <div class="field"><label class="f">Beleegyező nyilatkozat sablonja</label><select v-model="t.consent" class="inp" @change="saved"><option :value="undefined">általános</option><option v-for="(c, k) in CONSENT_TPL" :key="k" :value="k">{{ c.title.replace('Beleegyező nyilatkozat – ', '') }}</option></select></div>
             <div class="field"><label class="f">Szín a fogtérképen</label><input v-model.lazy="t.color" class="inp" type="color" style="padding:4px;height:40px" @change="saved"></div>
             <div class="field" style="grid-column:1 / -1"><label class="f">Kulcsszavak a diktáláshoz <span class="n">(vesszővel; * = minden ragozott alak)</span></label><input class="inp" :value="t.kw.join(', ')" @change="setKw(t, ($event.target as HTMLInputElement).value)"></div>
           </div>
@@ -196,10 +200,33 @@ async function resetDemo() {
       </div>
     </template>
 
+    <!-- külső kapcsolatok (szemléltetés) -->
+    <template v-else-if="tab === 'integr'">
+      <div class="card">
+        <div class="row"><h2 style="margin:0">EESZT – Elektronikus Egészségügyi Szolgáltatási Tér</h2><span class="badge b-yellow">demó: szimulált</span></div>
+        <p style="line-height:1.6">A végleges rendszerben a kezelés jóváhagyásakor a Molio automatikusan beküldi az ellátási eseményt és az ambuláns lapot, így az orvosnak és az asszisztensnek nem kell külön felületen rögzítenie. A kartonban kezelésenként látszik az állapot (beküldésre vár / beküldve).</p>
+        <p class="small muted" style="margin:0">Éles bekötéshez szükséges: EESZT-csatlakozási engedély és tanúsítás, intézményi azonosító, orvosi pecsétszámok, a szerveroldali tanúsítványkezelés. Most beküldésre vár: <b>{{ db.records.filter(r => r.eeszt?.status === 'pending').length }}</b> kezelés.</p>
+      </div>
+      <div class="card">
+        <div class="row"><h2 style="margin:0">Számlázó program</h2><span class="badge b-yellow">demó: szimulált</span></div>
+        <p style="line-height:1.6">A Molio a nap kezeléseiből összeállítja a számla tételeit (kezelés, fog, díj), a fizetési módot és – egészségpénztári fizetésnél – a pénztárat. A számlát a csatolt számlázó program (pl. Számlázz.hu vagy Billingo) állítja ki és jelenti a NAV Online Számla rendszerébe; a Molio nem saját számlázó.</p>
+        <div class="grid3">
+          <div class="field"><label class="f">Számlázó</label><select class="inp" disabled><option>Számlázz.hu (a végleges verzióban választható)</option></select></div>
+          <div class="field"><label class="f">API-kulcs</label><input class="inp" disabled placeholder="a végleges verzióban adható meg"></div>
+          <div class="field"><label class="f">Áfa</label><input class="inp" disabled value="könyvelővel egyeztetve állítandó be"></div>
+        </div>
+        <p class="small muted" style="margin:0">Demóban kiállított (szimulált) számlák: <b>{{ db.invoices.length }}</b>.</p>
+      </div>
+      <div class="card">
+        <div class="row"><h2 style="margin:0">Mesterséges intelligencia</h2><span class="badge b-gray">későbbi verzió</span></div>
+        <p style="line-height:1.6;margin-bottom:0">A páciens-tájékoztató a demóban sablon alapján készül. A végleges verzióban az AI írja a diktálásból, de a küldés előtt az orvos jóváhagyása ott is kötelező. Az orvos a saját Anthropic API-kulcsát a beállításokban adja meg.</p>
+      </div>
+    </template>
+
     <!-- anyag-törzsadatok -->
     <template v-else>
       <div class="row" style="margin-bottom:16px;align-items:stretch">
-        <div class="hint" style="margin:0;flex:1">Anyagonként a beszállító, a beszerzési idő, az egységár, a célkészlet és a diktáláshoz tartozó kulcsszavak. A mintában szereplő beszállítók kitaláltak, az árak becsült, tájékoztató értékek. <b>Teljes készletérték: {{ fmtFt(inv.stockValue) }}</b></div>
+        <div class="hint" style="margin:0;flex:1">Anyagonként a beszállító, a beszerzési idő, az átlagár (bevételezéskor számolódik), a célkészlet és a diktáláshoz tartozó kulcsszavak. A mintában szereplő beszállítók kitaláltak, az árak becsült, tájékoztató értékek. <b>Teljes készletérték: {{ fmtFt(inv.stockValue) }}</b></div>
         <button class="btn pri" @click="ui.open(NewItemModal, {})">+ Új anyag / csoport</button>
       </div>
       <div v-for="g in inv.groups" :key="g" class="card">
@@ -209,14 +236,14 @@ async function resetDemo() {
         </div>
         <div class="scroll-x">
           <table class="t">
-            <thead><tr><th>Megnevezés</th><th>Egység</th><th>Beszállító</th><th>Beszerzési idő</th><th>Egységár</th><th>Célkészlet</th><th>Készlet</th><th /></tr></thead>
+            <thead><tr><th>Megnevezés</th><th>Egység</th><th>Beszállító</th><th>Beszerzési idő</th><th>Átlagár</th><th>Célkészlet</th><th>Készlet</th><th /></tr></thead>
             <tbody>
               <tr v-for="i in db.items.filter(x => x.group === g)" :key="i.id">
                 <td><input v-model.lazy="i.name" class="inp" style="min-width:260px" @change="saved"></td>
                 <td><input v-model.lazy="i.unit" class="inp" style="width:84px" @change="saved"></td>
                 <td><input v-model.lazy="i.supplier" class="inp" style="min-width:160px" @change="saved"></td>
                 <td class="nowrap"><input v-model.number="i.lead" class="inp" type="number" min="0" style="width:70px" @change="saved"> nap</td>
-                <td class="nowrap"><input v-model.number="i.price" class="inp" type="number" min="0" style="width:90px" @change="saved"> Ft</td>
+                <td class="nowrap" title="Bevételezéskor számolódik (gördülő súlyozott átlag)">{{ fmtPrice(i.price) }}</td>
                 <td><input v-model.number="i.target" class="inp" type="number" min="1" style="width:84px" @change="saved"></td>
                 <td class="nowrap">{{ i.stock }} {{ i.unit }}</td>
                 <td class="nowrap"><button class="btn sm" @click="ui.open(ItemModal, { id: i.id })">Részletek</button> <button class="btn sm danger" @click="delItem(i.id)">×</button></td>

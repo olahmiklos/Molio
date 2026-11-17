@@ -12,7 +12,7 @@ import { analyze } from '~/utils/parser'
 import { teethStr } from '~/utils/teeth'
 import type { PatientDraft } from '../PatientFields.vue'
 
-const props = defineProps<{ editId?: string; patientId?: string; date?: string; start?: string; doctorId?: string }>()
+const props = defineProps<{ editId?: string; patientId?: string; date?: string; start?: string; doctorId?: string; typeId?: string }>()
 const data = useDataStore()
 const ap = useAppointmentStore()
 const patients = usePatientStore()
@@ -24,7 +24,7 @@ const patientId = ref<string | null>(ed?.patientId || props.patientId || null)
 const q = ref('')
 const newP = ref(false)
 const draft = ref<PatientDraft>({ name: '', birth: '', taj: '', phone: '', email: '', address: '', healthWarning: '', internalNote: '', needsBuffer: false, dentition: 'permanent' })
-const types = ref<string[]>(ed ? [...ed.typeIds] : [])
+const types = ref<string[]>(ed ? [...ed.typeIds] : props.typeId ? [props.typeId] : [])
 const doctorId = ref(ed?.doctorId || props.doctorId || db.value.doctors[0]!.id)
 const date = ref(ed?.date || props.date || ap.defaultBookingDate())
 const start = ref(ed?.start || props.start || fromMin(db.value.settings.startHour * 60))

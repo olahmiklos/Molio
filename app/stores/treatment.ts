@@ -4,12 +4,14 @@ import { defineStore } from 'pinia'
 import { useDataStore } from './data'
 import { usePatientStore } from './patient'
 import { fmtDate, fromMin, nowMin, today, uid } from '~/utils/dates'
-import type { Planned, Surface, SurfaceMap } from '~/utils/types'
+import type { LotUse, Planned, Surface, SurfaceMap } from '~/utils/types'
 import { analyze, analyzeStatus, type ParseResult, type StatusParse } from '~/utils/parser'
 import { feeFor, pkgFor, recordForAppt, surfacesFor, typeNames } from '~/utils/logic'
 import { SURFACE_ORDER, toothLabel } from '~/utils/teeth'
 import { guessDocType } from '~/utils/defaults'
 import { useRepository } from '~/repositories'
+import { consumeStock, previewLots, returnStock } from '~/utils/stock'
+import { patientInfoDraft, usableBatches } from '~/utils/office'
 
 export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual'
 export interface MatRow { id: string; pk: number; dq?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean }
@@ -35,6 +37,7 @@ interface Session {
   planned: Planned | null
   focusTooth: number | null
   mode: 'treat' | 'status'
+  sterBatch: string | null
   statusText: string
   statusEdits: Record<string, string[]>
 }
@@ -55,7 +58,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const dentition = computed(() => patient.value?.dentition || 'permanent')
 
   function base(o: Partial<Session> & { patientId: string; doctorId: string; date: string; time: string }): Session {
-    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', statusText: '', statusEdits: {}, ...o }
+    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, ...o }
   }
   const nowSlot = () => fromMin(Math.min(Math.max(Math.floor(nowMin() / 30) * 30, db.value.settings.startHour * 60), db.value.settings.endHour * 60 - 30))
 
@@ -72,7 +75,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   }
   function editRecord(rid: string) {
     const r = db.value.records.find(x => x.id === rid); if (!r) return
-    s.value = base({ recordId: r.id, patientId: r.patientId, appointmentId: r.appointmentId, doctorId: r.doctorId, date: r.date, time: r.time, teeth: [...r.teeth], types: [...r.typeIds], text: r.text, manualSurf: JSON.parse(JSON.stringify(r.surfaces || {})), planned: r.planned ? JSON.parse(JSON.stringify(r.planned)) : null })
+    s.value = base({ recordId: r.id, sterBatch: r.sterBatch ?? null, patientId: r.patientId, appointmentId: r.appointmentId, doctorId: r.doctorId, date: r.date, time: r.time, teeth: [...r.teeth], types: [...r.typeIds], text: r.text, manualSurf: JSON.parse(JSON.stringify(r.surfaces || {})), planned: r.planned ? JSON.parse(JSON.stringify(r.planned)) : null })
     parsed.value = analyze(r.text, db.value, { dentition: dentition.value })
     const saved: Record<string, number> = {}; r.materials.forEach(m => { saved[m.item] = m.qty })
     rows.value.forEach(row => { if (!(row.id in saved)) s.value!.unchecked.push(row.id) })
@@ -165,6 +168,10 @@ export const useTreatmentStore = defineStore('treatment', () => {
   function addMaterial(id: string) { const x = s.value; if (!x) return; if (!x.extra.includes(id)) x.extra.push(id); setChecked(id, true); if (x.overrides[id] === undefined) x.overrides[id] = 1 }
 
   const fee = computed(() => (s.value ? feeFor(db.value, s.value.types, s.value.teeth, surfaces.value) : 0))
+  /** a kiadandó gyártási tételek előnézete (lejárat szerint) */
+  const lotPreview = (id: string, qty: number) => (db.value.items.find(i => i.id === id)?.lotTracked ? previewLots(db.value, id, qty) : [])
+  const cost = computed(() => rows.value.filter(r => r.checked && r.qty > 0).reduce((sum, r) => sum + r.qty * (db.value.items.find(i => i.id === r.id)?.price || 0), 0))
+  const consents = computed(() => (s.value ? db.value.consents.filter(c => c.sessKey === s.value!.key || (s.value!.recordId && c.recordId === s.value!.recordId)) : []))
 
   /* ---------- csatolmányok ---------- */
   const attachments = computed(() => (s.value ? db.value.attachments.filter(a => a.sessKey === s.value!.key || (s.value!.recordId && a.recordId === s.value!.recordId)) : []))
@@ -186,6 +193,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const repo = useRepository()
     db.value.attachments.filter(a => a.sessKey === x.key).forEach(a => repo.deleteFile(a.id))
     db.value.attachments = db.value.attachments.filter(a => a.sessKey !== x.key)
+    db.value.consents = db.value.consents.filter(c => c.sessKey !== x.key)
     s.value = null
   }
   const hasUnsaved = computed(() => !!s.value && ((!!s.value.text.trim() && !s.value.recordId) || attachments.value.some(a => a.sessKey === s.value!.key)))
@@ -199,22 +207,41 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const teeth = [...x.teeth].sort((a, b) => a - b)
     const surf: SurfaceMap = {}; teeth.forEach(n => { if (surfaces.value[n]?.length) surf[n] = [...surfaces.value[n]!] })
     const tn = typeNames(db.value, x.types)
-    const common = { doctorId: x.doctorId, typeIds: [...x.types], teeth, surfaces: surf, planned: x.planned, extended: extendedTeeth.value.length > 0, text: x.text.trim(), materials: mats, fee: fee.value }
+    const common = { doctorId: x.doctorId, typeIds: [...x.types], teeth, surfaces: surf, planned: x.planned, extended: extendedTeeth.value.length > 0, text: x.text.trim(), fee: fee.value, sterBatch: x.sterBatch }
+    const item = (id: string) => db.value.items.find(i => i.id === id)
     let recId: string
     if (x.recordId) {
       const rec = db.value.records.find(r => r.id === x.recordId)!
       const old: Record<string, number> = {}; rec.materials.forEach(m => { old[m.item] = m.qty })
       const nw: Record<string, number> = {}; mats.forEach(m => { nw[m.item] = m.qty })
+      const newMats = mats.map(m => ({ ...m, lots: rec.materials.find(o => o.item === m.item)?.lots?.map(l => ({ ...l })) || [] }))
       new Set([...Object.keys(old), ...Object.keys(nw)]).forEach(id => {
         const diff = (nw[id] || 0) - (old[id] || 0)
-        if (diff) { const it = db.value.items.find(i => i.id === id); if (it) it.stock -= diff; db.value.movements.push({ id: uid(), item: id, date: today(), qty: -diff, kind: 'corr', recordId: rec.id, patientId: rec.patientId, note: 'Kezelés utólagos módosítása (' + fmtDate(rec.date) + ')' }) }
+        const it = item(id); if (!diff || !it) return
+        const nm = newMats.find(m => m.item === id)
+        let lots: LotUse[] = []
+        if (diff > 0) { lots = consumeStock(db.value, it, diff); if (nm) nm.lots = [...(nm.lots || []), ...lots] }
+        else {
+          const oldLots = rec.materials.find(o => o.item === id)?.lots || []
+          returnStock(db.value, it, -diff, oldLots)
+          if (nm) { let left = -diff; nm.lots = (nm.lots || []).slice().reverse().map(l => { const q = Math.min(l.qty, left); left -= q; return { ...l, qty: l.qty - q } }).filter(l => l.qty > 0).reverse() }
+        }
+        db.value.movements.push({ id: uid(), item: id, date: today(), qty: -diff, kind: 'corr', recordId: rec.id, patientId: rec.patientId, note: 'Kezelés utólagos módosítása (' + fmtDate(rec.date) + ')', lots: diff > 0 ? lots : undefined })
       })
-      Object.assign(rec, common); recId = rec.id
+      Object.assign(rec, common, { materials: newMats.map(m => ({ ...m, lots: m.lots?.length ? m.lots : undefined, cost: m.qty * (item(m.item)?.price || 0) })) }); recId = rec.id
     } else {
       recId = uid()
-      db.value.records.push({ id: recId, patientId: x.patientId, appointmentId: x.appointmentId, date: x.date, time: x.time, ...common })
-      mats.forEach(m => { const it = db.value.items.find(i => i.id === m.item); if (it) it.stock -= m.qty; db.value.movements.push({ id: uid(), item: m.item, date: x.date, qty: -m.qty, kind: 'use', recordId: recId, patientId: x.patientId, note: tn }) })
+      const used = mats.map(m => {
+        const it = item(m.item); if (!it) return { ...m }
+        const cost = m.qty * it.price
+        const lots = consumeStock(db.value, it, m.qty)
+        db.value.movements.push({ id: uid(), item: m.item, date: x.date, qty: -m.qty, kind: 'use', recordId: recId, patientId: x.patientId, note: tn, lots: lots.length ? lots : undefined })
+        return { ...m, cost, lots: lots.length ? lots : undefined }
+      })
+      const rec = { id: recId, patientId: x.patientId, appointmentId: x.appointmentId, date: x.date, time: x.time, ...common, materials: used, eeszt: { status: 'pending' as const } }
+      db.value.records.push({ ...rec, patientInfo: { text: patientInfoDraft(db.value, rec), status: 'draft' } })
     }
+    db.value.consents.forEach(c => { if (c.sessKey === x.key) { c.recordId = recId; c.sessKey = null } })
     db.value.attachments.forEach(a => { if (a.sessKey === x.key) { a.recordId = recId; a.sessKey = null } })
     const warns: { level: 'err' | 'warn'; text: string }[] = []
     db.value.items.forEach(it => {
@@ -229,7 +256,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     })
     const pid = x.patientId
     s.value = null
-    return { warns, statusOffer, patientId: pid, recordId: recId }
+    return { warns, statusOffer, patientId: pid, recordId: recId, hasInfo: !x.recordId }
   }
 
   /* ---------- fogazati státusz felvétele diktálással (2.2.6) ---------- */
@@ -273,7 +300,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     s, parsed, statusParsed, patient, dentition, active,
     startFromAppointment, startNew, editRecord, setText, applyParse, toggleTooth, focus, toggleType,
     surfaces, toggleSurface, needsSurface, missingSurface, extendedTeeth, offDentition,
-    rows, toReview, setChecked, setQty, resetQty, addMaterial, fee,
+    rows, toReview, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
     attachments, upload, cancel, hasUnsaved, approve,
     setMode, setStatusText, statusDraft, setToothStatus, statusConflicts, approveStatus, discardStatus, isDoneAppt,
   }

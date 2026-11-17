@@ -8,7 +8,7 @@ export const SITE_ID = 'site-buda'
 export const ROOM_ID = 'room-1'
 
 export function defaultItems(): Item[] {
-  const DP = 'Dentál Partner Kft.', MD = 'MedDent Nagykereskedés Zrt.', HM = 'Higiénia-Med Kft.', EL = 'Endo-Line Kft.'
+  const DP = 'Dentál Partner Kft.', MD = 'MedDent Nagykereskedés Zrt.', HM = 'Higiénia-Med Kft.', EL = 'Endo-Line Kft.', IM = 'Implant-Med Kft.'
   const I = (id: string, group: string, name: string, unit: string, target: number, stock: number, lead: number, price: number, supplier: string, kw: string[], generic = false): Item =>
     ({ id, siteId: SITE_ID, group, name, unit, target, stock, lead, price, supplier, kw, generic })
   return [
@@ -36,27 +36,35 @@ export function defaultItems(): Item[] {
     I('polir', 'Profilaxis', 'Polírpaszta', 'adag', 200, 25, 21, 90, HM, ['polirpaszt*', 'paszt*']),
     I('nyal', 'Egyszer használatos eszközök', 'Nyálszívó', 'db', 300, 210, 5, 15, HM, ['nyalsziv*', 'szivo*']),
     I('kesz', 'Egyszer használatos eszközök', 'Nitril kesztyű', 'pár', 500, 300, 5, 45, HM, ['keszty*']),
-  ]
+    I('impl41', 'Implantátumok', 'Titán implantátum Ø 4,1 × 10 mm', 'db', 6, 4, 10, 62000, IM, ['implantatum*', 'implantat*', 'mugyoker*'], true),
+    I('impl35', 'Implantátumok', 'Titán implantátum Ø 3,5 × 11 mm (keskeny)', 'db', 4, 3, 10, 62000, IM, ['keskeny implant*', '3,5*', 'harom egesz ot*']),
+    I('gyogy', 'Implantátumok', 'Gyógyulási csavar (fejecske)', 'db', 10, 7, 10, 9500, IM, ['gyogyulasi*', 'fejecsk*']),
+  ].map(it => ({ ...it, lotTracked: LOT_TRACKED.includes(it.id), implant: it.group === 'Implantátumok' && it.id !== 'gyogy' }))
 }
+/** gyártási szám (LOT) és lejárat szerint nyilvántartott anyagok */
+export const LOT_TRACKED = ['amp', 'amp2', 'lido', 'mepi', 'komp', 'bond', 'leny', 'impl41', 'impl35', 'gyogy']
 
 export function defaultTypes(): TreatmentType[] {
   return [
-    { id: 'kontroll', name: 'Állapotfelmérés, kontroll', dur: 30, buffer: 0, price: 15000, color: '#13b0a5', kw: ['kontroll*', 'allapotfelmer*', 'vizsgal*', 'szures*'],
+    { id: 'kontroll', name: 'Állapotfelmérés, kontroll', dur: 30, buffer: 0, price: 15000, recallMonths: 12, consent: 'altalanos', color: '#13b0a5', kw: ['kontroll*', 'allapotfelmer*', 'vizsgal*', 'szures*'],
       mats: [{ item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' }, { item: 'tamp', qty: 2, per: 'visit' }] },
-    { id: 'tomes', name: 'Esztétikus (kompozit) tömés', dur: 60, buffer: 0, price: 25000, priceBySurf: [25000, 32000, 38000], needsSurface: true, statusAfter: 'tomott', color: '#2a8ccc',
+    { id: 'tomes', name: 'Esztétikus (kompozit) tömés', dur: 60, buffer: 0, price: 25000, priceBySurf: [25000, 32000, 38000], needsSurface: true, statusAfter: 'tomott', consent: 'tomes', color: '#2a8ccc',
       kw: ['tomes*', 'tomt*', 'tomo*', 'tomni*', 'tomunk*'], notAfter: ['ideiglenes*'],
       mats: [{ item: 'amp', qty: 1, per: 'visit' }, { item: 'tu', qty: 1, per: 'visit' }, { item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' },
         { item: 'tamp', qty: 3, per: 'tooth' }, { item: 'sav', qty: 1, per: 'tooth' }, { item: 'bond', qty: 1, per: 'surface' }, { item: 'komp', qty: 1, per: 'surface' }, { item: 'polir', qty: 1, per: 'tooth' }] },
-    { id: 'fogko', name: 'Fogkő-eltávolítás és polírozás', dur: 60, buffer: 0, price: 20000, color: '#9aa5b1', kw: ['fogko*', 'depural*', 'ultrahang*'],
+    { id: 'fogko', name: 'Fogkő-eltávolítás és polírozás', dur: 60, buffer: 0, price: 20000, recallMonths: 6, color: '#9aa5b1', kw: ['fogko*', 'depural*', 'ultrahang*'],
       mats: [{ item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' }, { item: 'tamp', qty: 4, per: 'visit' }, { item: 'polir', qty: 3, per: 'visit' }] },
-    { id: 'huzas', name: 'Foghúzás', dur: 30, buffer: 30, price: 22000, statusAfter: 'hianyzik', color: '#e8344e', kw: ['foghuz*', 'huzas*', 'kihuz*', 'huzt*', 'extrakci*'],
+    { id: 'huzas', name: 'Foghúzás', dur: 30, buffer: 30, price: 22000, statusAfter: 'hianyzik', consent: 'huzas', color: '#e8344e', kw: ['foghuz*', 'huzas*', 'kihuz*', 'huzt*', 'extrakci*'],
       mats: [{ item: 'amp', qty: 1, per: 'visit' }, { item: 'tu', qty: 1, per: 'visit' }, { item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' }, { item: 'tamp', qty: 2, per: 'tooth' }, { item: 'gez', qty: 2, per: 'tooth' }] },
-    { id: 'korona', name: 'Koronához fogelőkészítés és lenyomatvétel', dur: 90, buffer: 30, price: 45000, statusAfter: 'korona', color: '#f5b31f', kw: ['koron*', 'csiszol*', 'preparal*'],
+    { id: 'korona', name: 'Koronához fogelőkészítés és lenyomatvétel', dur: 90, buffer: 30, price: 45000, statusAfter: 'korona', consent: 'korona', color: '#f5b31f', kw: ['koron*', 'csiszol*', 'preparal*'],
       mats: [{ item: 'amp', qty: 1, per: 'visit' }, { item: 'tu', qty: 1, per: 'visit' }, { item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' }, { item: 'leny', qty: 2, per: 'visit' },
         { item: 'tamp', qty: 3, per: 'tooth' }, { item: 'ideig', qty: 1, per: 'tooth' }] },
-    { id: 'gyoker', name: 'Gyökérkezelés', dur: 90, buffer: 30, price: 58000, statusAfter: 'gyokerkezelt', color: '#8b4fe0', kw: ['gyokerkezel*', 'gyokercsatorn*', 'trepanal*'],
+    { id: 'gyoker', name: 'Gyökérkezelés', dur: 90, buffer: 30, price: 58000, statusAfter: 'gyokerkezelt', consent: 'gyoker', color: '#8b4fe0', kw: ['gyokerkezel*', 'gyokercsatorn*', 'trepanal*'],
       mats: [{ item: 'amp', qty: 1, per: 'visit' }, { item: 'tu', qty: 1, per: 'visit' }, { item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' },
         { item: 'tamp', qty: 3, per: 'tooth' }, { item: 'resz', qty: 3, per: 'tooth' }, { item: 'obl', qty: 10, per: 'tooth' }, { item: 'tu4', qty: 1, per: 'tooth' }, { item: 'gutta', qty: 4, per: 'tooth' }, { item: 'ideig', qty: 1, per: 'tooth' }] },
+    { id: 'implant', name: 'Implantátum beültetése', dur: 90, buffer: 30, price: 280000, statusAfter: 'implantatum', consent: 'implant', color: '#13b0a5', kw: ['beultet*', 'implantal*', 'implantacio*'],
+      mats: [{ item: 'amp', qty: 2, per: 'visit' }, { item: 'tu2', qty: 1, per: 'visit' }, { item: 'kesz', qty: 2, per: 'visit' }, { item: 'nyal', qty: 1, per: 'visit' },
+        { item: 'impl41', qty: 1, per: 'tooth' }, { item: 'gyogy', qty: 1, per: 'tooth' }, { item: 'varrat', qty: 1, per: 'tooth' }, { item: 'gez', qty: 2, per: 'tooth' }] },
   ]
 }
 

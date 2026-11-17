@@ -5,6 +5,7 @@ import { addDays, dayDiff, dow, today, uid } from '~/utils/dates'
 import type { Item, TreatmentType } from '~/utils/types'
 import { attention, forecastItem, futureAppts, pkgFor, surfacesFor } from '~/utils/logic'
 import { SITE_ID } from '~/utils/defaults'
+import { expiryRows, lotSearch, lotsOf, orderSuggestions, receiveStock, untrackedQty, weightedAvg, type ReceiveInput } from '~/utils/stock'
 
 export const useInventoryStore = defineStore('inventory', () => {
   const data = useDataStore()
@@ -26,17 +27,33 @@ export const useInventoryStore = defineStore('inventory', () => {
   const stockValue = computed(() => db.value.items.reduce((s, i) => s + Math.max(0, i.stock) * (i.price || 0), 0))
   const movementsOf = (id: string) => db.value.movements.filter(m => m.item === id).sort((a, b) => b.date.localeCompare(a.date))
 
-  function receive(itemId: string, qty: number, date: string, note: string) {
-    const it = itemById(itemId); if (!it || !(qty > 0)) return
-    it.stock += qty
-    db.value.movements.push({ id: uid(), item: it.id, date: date || today(), qty, kind: 'in', note: note || 'Bevételezés' })
+  /** bevételezés egységárral (gördülő átlagár), gyártási számmal és lejárattal */
+  function receive(itemId: string, inp: ReceiveInput) {
+    const it = itemById(itemId); if (!it || !(inp.qty > 0)) return null
+    return receiveStock(db.value, it, inp)
   }
-  function addItem(it: Omit<Item, 'id' | 'siteId' | 'generic'>) {
-    const n: Item = { ...it, id: 'i' + uid(), siteId: SITE_ID, generic: false }
+  const previewAvg = (it: Item, qty: number, unitPrice: number) => weightedAvg(it.stock, it.price, qty, unitPrice)
+  function addItem(it: Omit<Item, 'id' | 'siteId' | 'generic'>, lot?: { lot: string; expiry: string }) {
+    const n: Item = { ...it, id: 'i' + uid(), siteId: SITE_ID, generic: false, lastPrice: it.price }
     db.value.items.push(n)
-    db.value.movements.push({ id: uid(), item: n.id, date: today(), qty: n.stock, kind: 'in', note: 'Nyitókészlet' })
+    db.value.movements.push({ id: uid(), item: n.id, date: today(), qty: n.stock, kind: 'in', note: 'Nyitókészlet', unitPrice: n.price, avgAfter: n.price, lot: lot?.lot || undefined, expiry: lot?.expiry || undefined })
+    if (lot?.lot && n.stock > 0) db.value.lots.push({ id: uid(), item: n.id, lot: lot.lot, expiry: lot.expiry, qty: n.stock, received: today(), unitPrice: n.price })
     return n
   }
+
+  /* ---------- gyártási tételek, lejárat, rendelési javaslat, megrendelések ---------- */
+  const lots = (id: string) => lotsOf(db.value, id)
+  const untracked = (it: Item) => untrackedQty(db.value, it)
+  const expiring = computed(() => expiryRows(db.value, 90))
+  const suggestions = computed(() => orderSuggestions(db.value))
+  const openOrders = computed(() => db.value.orders.filter(o => o.status === 'ordered').sort((a, b) => b.date.localeCompare(a.date)))
+  const searchLot = (q: string) => lotSearch(db.value, q)
+  /** a munkatárs jelzi, hogy leadta a rendelést (a program maga nem rendel) */
+  function markOrdered(supplier: string, lines: { item: string; qty: number }[], orderedBy: string, note: string) {
+    const o = { id: uid(), date: today(), supplier, lines: lines.filter(l => l.qty > 0), orderedBy, status: 'ordered' as const, note }
+    db.value.orders.push(o); return o
+  }
+  function closeOrder(id: string) { const o = db.value.orders.find(x => x.id === id); if (o) o.status = 'received' }
   /** a még nem használt anyag törölhető */
   function deleteItemCheck(id: string): string | null {
     const used = db.value.types.filter(t => t.mats.some(m => m.item === id)).map(t => t.name)
@@ -47,6 +64,7 @@ export const useInventoryStore = defineStore('inventory', () => {
   function deleteItem(id: string) {
     db.value.items = db.value.items.filter(i => i.id !== id)
     db.value.movements = db.value.movements.filter(m => m.item !== id)
+    db.value.lots = db.value.lots.filter(l => l.item !== id)
   }
 
   function addType() {
@@ -74,5 +92,5 @@ export const useInventoryStore = defineStore('inventory', () => {
     return { weeks, w0 }
   }
 
-  return { itemById, typeById, groups, suppliers, alerts, forecast, rows, stockValue, movementsOf, receive, addItem, deleteItemCheck, deleteItem, addType, deleteTypeCheck, deleteType, pkgCost, weekly }
+  return { itemById, typeById, groups, suppliers, alerts, forecast, rows, stockValue, movementsOf, receive, previewAvg, addItem, lots, untracked, expiring, suggestions, openOrders, searchLot, markOrdered, closeOrder, deleteItemCheck, deleteItem, addType, deleteTypeCheck, deleteType, pkgCost, weekly }
 })

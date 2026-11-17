@@ -33,3 +33,12 @@ export const fmtSize = (b: number) => (b >= 1048576 ? fmtNum(b / 1048576) + ' MB
 export const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[1]![0] + '.' : p[0] || '' }
 export const parseKw = (s: string) => s.split(',').map(x => norm(x).trim()).filter(Boolean)
 export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+/** hónapok hozzáadása (a hónap végén a hónap utolsó napjára igazítva) */
+export const addMonths = (s: string, n: number) => {
+  const d = fromYmd(s), day = d.getDate()
+  d.setDate(1); d.setMonth(d.getMonth() + n)
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+  d.setDate(Math.min(day, last)); return ymd(d)
+}
+/** egységár legfeljebb két tizedessel (az átlagár nem mindig kerek) */
+export const fmtPrice = (n: number) => (Math.round((n || 0) * 100) / 100).toLocaleString('hu-HU', { maximumFractionDigits: 2 }) + ' Ft'

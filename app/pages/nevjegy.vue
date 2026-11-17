@@ -25,12 +25,13 @@ onMounted(() => { ua.value = navigator.userAgent; speech.value = !!((window as a
       </div>
     </div>
     <div class="card">
-      <h2>A demó hatóköre (1.0)</h2>
+      <h2>A demó hatóköre (2.0)</h2>
       <ul style="line-height:1.8;margin:0;padding-left:20px">
         <li><b>Recepció:</b> betegnyilvántartás, két fogorvos naptára (napi, heti, havi nézet), ráhagyási sávok, emlékeztetők előnézete és szimulált küldése, meg nem jelenési kockázat.</li>
         <li><b>Kezelés:</b> diktálás, fogszám (FDI, „tizenhatos”, „jobb felső hatos”, tejfogak), fogfelszínek és bővítés kezelés közben, anyagjavaslat, díj a felszínek szerint, ívelt röntgenszerű fogtérkép, fogazati státusz diktálással, csatolmányok, PDF ügyfélkarton.</li>
-        <li><b>Raktár:</b> készlet, automatikus levonás, 60 napos előrejelzés, rendelési határidő, bevételezés, törzsadatok.</li>
-        <li><b>Nem része:</b> bejelentkezés és szerepkörök, drag-and-drop foglalás, check-in és váróterem, valódi SMS/e-mail küldés, AI-feldolgozás.</li>
+        <li><b>Raktár:</b> készlet, automatikus levonás, 60 napos előrejelzés, rendelési határidő, bevételezés egységárral és <b>gördülő átlagárral</b>, gyártási szám (LOT) és lejárat, kiadás lejárat szerint, <b>rendelési javaslat</b> (a rendelést munkatárs adja le), implantátum-nyomonkövetés és LOT-keresés visszahíváshoz.</li>
+        <li><b>Új a 2.0-ban:</b> digitális beleegyező nyilatkozat tableten aláírva (PDF a kartonba), közérthető páciens-tájékoztató orvosi jóváhagyással, kontroll-meghívók (recall), sterilizációs napló, EESZT-jelentés és számla előkészítése (szemléltetés), letölthető felhasználói kézikönyv.</li>
+        <li><b>Nem része:</b> bejelentkezés és szerepkörök, drag-and-drop foglalás, check-in és váróterem, valódi SMS/e-mail küldés, valódi EESZT-beküldés és számlakiállítás, AI-feldolgozás.</li>
       </ul>
     </div>
     <div class="card">

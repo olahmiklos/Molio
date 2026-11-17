@@ -1,14 +1,15 @@
 // Mintaadatok (Cooldent Kft., kitalált páciensek), az első megnyitás napjához igazítva.
 // A böngészős demó és a PostgreSQL seed (prisma/seed.ts) ugyanezt a generátort használja.
 import { addDays, dow, fromMin, toMin, today, uid } from './dates'
-import type { Appointment, DB, Patient, StatusSnapshot, SurfaceMap } from './types'
+import type { Appointment, DB, LotUse, Patient, StatusSnapshot, SurfaceMap, TreatmentRecord } from './types'
 import { defaultItems, defaultNotify, defaultTypes, ROOM_ID, SITE_ID } from './defaults'
 import { analyze, DEFAULT_STATUS_DICT } from './parser'
 import { bufferFor, feeFor, forecastItem, HORIZON, pkgFor, surfacesFor, typeNames } from './logic'
 import { overlaps } from './calendar'
 import { allTeeth } from './teeth'
+import { batchNo, eesztRef, nextInvoiceNo, patientInfoDraft, STER_DEVICES, STER_PROGRAMS } from './office'
 
-export const DB_VERSION = 3
+export const DB_VERSION = 4
 
 function tajFrom(base8: string) {
   const d = base8.split('').map(Number)
@@ -69,6 +70,7 @@ export function seed(): DB {
     doctors: [{ id: 'csempesz', name: 'Dr. Csempesz' }, { id: 'olah', name: 'Dr. Oláh' }],
     items: defaultItems(), types: defaultTypes(),
     patients: [], appointments: [], records: [], movements: [], attachments: [], events: [],
+    lots: [], orders: [], sterCycles: [], recallInvites: [], consents: [], invoices: [],
   }
   const yearsAgo = (y: number, md: string) => `${Number(t0.slice(0, 4)) - y}-${md}`
   const P: [string, string, string, string, string, string, string, string, boolean?][] = [
@@ -152,15 +154,16 @@ export function seed(): DB {
     }
   }
 
-  // korábbi kezelések a múltbeli időpontokhoz
+  // korábbi kezelések a múltbeli időpontokhoz (a nyomon követett anyagok a korábbi, már elfogyott gyártási tételből)
   const usedTotals: Record<string, number> = {}
+  const withLots = (mats: { item: string; qty: number }[]) => mats.map(m => OLD_LOT[m.item] ? { ...m, lots: [{ lot: OLD_LOT[m.item]!, expiry: addDays(t0, 120), qty: m.qty }] as LotUse[] } : m)
   let recIdx = 0
   db.appointments.filter(a => a.date < t0).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).forEach(a => {
     const tp = a.typeIds[0]!, variants = SAMPLE_TEXT[tp]!, text = variants[(recIdx++) % variants.length]!
     const parsed = analyze(text, db)
     const pk = pkgFor(db, a.typeIds, Math.max(1, parsed.teeth.length), surfacesFor(parsed.teeth, parsed.surfaces))
-    const mats = Object.entries(pk).map(([item, qty]) => ({ item, qty }))
-    const rec = { id: uid(), patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: a.date, time: a.start, typeIds: a.typeIds.slice(), teeth: parsed.teeth, surfaces: parsed.surfaces, text, materials: mats, fee: feeFor(db, a.typeIds, parsed.teeth, parsed.surfaces) }
+    const mats = withLots(Object.entries(pk).map(([item, qty]) => ({ item, qty })))
+    const rec: TreatmentRecord = { id: uid(), patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: a.date, time: a.start, typeIds: a.typeIds.slice(), teeth: parsed.teeth, surfaces: parsed.surfaces, text, materials: mats, fee: feeFor(db, a.typeIds, parsed.teeth, parsed.surfaces) }
     db.records.push(rec)
     mats.forEach(m => {
       usedTotals[m.item] = (usedTotals[m.item] || 0) + m.qty
@@ -173,9 +176,22 @@ export function seed(): DB {
     const parsed = analyze(text, db)
     db.records.push({ id: uid(), patientId: pt(8).id, appointmentId: null, doctorId: 'olah', date: addDays(t0, -100), time: '11:00', typeIds: ['tomes'], teeth: parsed.teeth, surfaces: parsed.surfaces, text, materials: [{ item: 'komp', qty: 1 }, { item: 'bond', qty: 1 }, { item: 'topik', qty: 1 }], fee: feeFor(db, ['tomes'], parsed.teeth, parsed.surfaces) })
   }
-  // nyitókészlet, hogy a mozgásnapló a jelenlegi készletre jöjjön ki
+  // nyitókészlet és gyártási tételek, hogy a mozgásnapló a jelenlegi készletre jöjjön ki
   db.items.forEach(it => {
-    db.movements.push({ id: uid(), item: it.id, date: addDays(t0, -30), qty: it.stock + (usedTotals[it.id] || 0), kind: 'in', note: 'Nyitókészlet' })
+    const lots = OPEN_LOTS[it.id]
+    if (!lots) {
+      db.movements.push({ id: uid(), item: it.id, date: addDays(t0, -30), qty: it.stock + (usedTotals[it.id] || 0), kind: 'in', note: 'Nyitókészlet', unitPrice: it.price, avgAfter: it.price })
+      return
+    }
+    if (usedTotals[it.id]) db.movements.push({ id: uid(), item: it.id, date: addDays(t0, -30), qty: usedTotals[it.id]!, kind: 'in', note: 'Nyitókészlet (azóta felhasználva)', unitPrice: lots[0]!.price, avgAfter: lots[0]!.price, lot: OLD_LOT[it.id], expiry: addDays(t0, 120) })
+    let stockSoFar = 0, avg = 0
+    lots.forEach(l => {
+      const exp = addDays(t0, l.exp), rec = addDays(t0, l.rec)
+      avg = Math.round(((stockSoFar * avg + l.qty * l.price) / (stockSoFar + l.qty)) * 100) / 100; stockSoFar += l.qty
+      db.lots.push({ id: uid(), item: it.id, lot: l.lot, expiry: exp, qty: l.qty, received: rec, unitPrice: l.price })
+      db.movements.push({ id: uid(), item: it.id, date: rec, qty: l.qty, kind: 'in', note: l.rec <= -30 ? 'Nyitókészlet' : 'Bevételezés – számla: ' + l.inv, unitPrice: l.price, avgAfter: avg, lot: l.lot, expiry: exp })
+    })
+    it.price = avg; it.lastPrice = lots[lots.length - 1]!.price
   })
   // a polírpaszta előrejelzése legyen piros (bemutatóhoz)
   for (let guard = 0; guard < 30; guard++) {
@@ -204,5 +220,80 @@ export function seed(): DB {
     a.created = a.date < t0 ? addDays(a.date, -14) : addDays(t0, -3)
   })
   const ff = db.appointments.find(a => a.date > t0 && a.patientId === pt(0).id); if (ff) ff.confirmed = true
+  seedV2(db)
   return db
+}
+
+/** gyártási tételek: a korábbi (már elfogyott) és a raktáron lévő tételek */
+const OLD_LOT: Record<string, string> = { amp: 'AR24-0610', amp2: 'AR24-0802', lido: 'LD24-0705', mepi: 'MP24-1003', komp: 'KA2-2408', bond: 'BD-24-031', leny: 'SL-2409', impl41: 'IM2405-1182', gyogy: 'GY2403-051' }
+const OPEN_LOTS: Record<string, { lot: string; exp: number; rec: number; qty: number; price: number; inv?: string }[]> = {
+  amp: [{ lot: 'AR24-0915', exp: 25, rec: -30, qty: 40, price: 260 }, { lot: 'AR25-0311', exp: 540, rec: -30, qty: 80, price: 260 }],
+  amp2: [{ lot: 'AR25-0102', exp: 400, rec: -30, qty: 60, price: 270 }],
+  lido: [{ lot: 'LD24-1120', exp: 300, rec: -30, qty: 45, price: 210 }],
+  mepi: [{ lot: 'MP25-0207', exp: 450, rec: -30, qty: 30, price: 290 }],
+  komp: [{ lot: 'KA2-2411', exp: 50, rec: -30, qty: 30, price: 500 }, { lot: 'KA2-2504', exp: 500, rec: -10, qty: 30, price: 540, inv: 'DP-2026/1187' }],
+  bond: [{ lot: 'BD-24-077', exp: 220, rec: -30, qty: 55, price: 180 }],
+  leny: [{ lot: 'SL-2502', exp: 180, rec: -30, qty: 22, price: 1500 }],
+  impl41: [{ lot: 'IM2408-2210', exp: 1400, rec: -30, qty: 2, price: 62000 }, { lot: 'IM2502-0415', exp: 1600, rec: -12, qty: 2, price: 64000, inv: 'IM-2026/0342' }],
+  impl35: [{ lot: 'IM2501-0930', exp: 1500, rec: -30, qty: 3, price: 62000 }],
+  gyogy: [{ lot: 'GY2410-118', exp: 1200, rec: -30, qty: 7, price: 9500 }],
+}
+
+/** v2.0 mintaadatai: implantátumok, régebbi kezelések a kontroll-meghívókhoz, sterilizálás, EESZT, számlák, rendelés */
+function seedV2(db: DB) {
+  const t0 = today()
+  const pt = (i: number) => db.patients[i]!
+  const rec = (pi: number, date: string, typeId: string, teeth: number[], text: string, mats: TreatmentRecord['materials'], doctorId = 'csempesz'): TreatmentRecord => {
+    const r: TreatmentRecord = { id: uid(), patientId: pt(pi).id, appointmentId: null, doctorId, date, time: '10:30', typeIds: [typeId], teeth, surfaces: {}, text, materials: mats, fee: feeFor(db, [typeId], teeth, {}) }
+    db.records.push(r); return r
+  }
+  // implantátumok (Kovács Mária 37-es, Nagy Péter 46-os)
+  rec(6, addDays(t0, -200), 'implant', [37], 'A 37-es fog helyére implantátum beültetése vezetéses érzéstelenítésben, két ampulla artikain. Titán implantátum 4,1 × 10 mm, gyógyulási csavar, egy öltés. Két gézlap.',
+    [{ item: 'amp', qty: 2 }, { item: 'impl41', qty: 1, lots: [{ lot: 'IM2405-1182', expiry: addDays(t0, 900), qty: 1 }] }, { item: 'gyogy', qty: 1, lots: [{ lot: 'GY2403-051', expiry: addDays(t0, 700), qty: 1 }] }, { item: 'varrat', qty: 1 }, { item: 'gez', qty: 2 }], 'olah')
+  rec(1, addDays(t0, -45), 'implant', [46], '46-os régió, implantátum beültetése. Érzéstelenítés két ampulla artikainnal, hosszú tűvel. Titán implantátum 4,1 × 10 mm, gyógyulási csavar, varrat. Kontroll egy hét múlva varratszedéssel.',
+    [{ item: 'amp', qty: 2 }, { item: 'impl41', qty: 1, lots: [{ lot: 'IM2408-2210', expiry: addDays(t0, 1400), qty: 1 }] }, { item: 'gyogy', qty: 1, lots: [{ lot: 'GY2403-051', expiry: addDays(t0, 700), qty: 1 }] }, { item: 'varrat', qty: 1 }, { item: 'gez', qty: 2 }], 'olah')
+  // régebbi kontrollok és fogkő-eltávolítások → esedékes kontroll-meghívók
+  const OLD: [number, number, string][] = [[0, -190, 'fogko'], [2, -200, 'fogko'], [3, -175, 'fogko'], [4, -370, 'kontroll'], [5, -360, 'kontroll'], [7, -220, 'fogko'], [7, -380, 'kontroll'], [3, -400, 'kontroll'], [8, -170, 'fogko']]
+  OLD.forEach(([pi, d, ty]) => rec(pi, addDays(t0, d), ty, [], SAMPLE_TEXT[ty]![0]!, ty === 'fogko' ? [{ item: 'kesz', qty: 2 }, { item: 'polir', qty: 3 }] : [{ item: 'kesz', qty: 2 }], pi % 2 ? 'olah' : 'csempesz'))
+  db.recallInvites.push({ id: uid(), patientId: pt(2).id, typeId: 'fogko', date: addDays(t0, -6), channels: ['SMS'] })
+
+  // sterilizációs napló: munkanaponként reggel Bowie–Dick-teszt, délelőtt és délután egy-egy ciklus
+  const ops = ['Fehér Kata', 'Szűts Réka']
+  let failDay = addDays(t0, -5); while (dow(failDay) > 5) failDay = addDays(failDay, -1)
+  for (let d = addDays(t0, -21); d <= t0; d = addDays(d, 1)) {
+    if (dow(d) > 5) continue
+    const op = ops[dow(d) % 2]!
+    const cyc = (time: string, program: string, packs: number, contents: string, extra: Partial<DB['sterCycles'][number]> = {}) =>
+      db.sterCycles.push({ id: uid(), date: d, time, device: STER_DEVICES[0]!, program, batch: batchNo(db, d), operator: op, packs, contents, chem: true, bowieDick: null, bio: null, ok: true, note: '', ...extra })
+    cyc('07:45', STER_PROGRAMS[2]!, 0, 'Bowie–Dick tesztcsomag', { bowieDick: true })
+    if (d === t0) { cyc('08:15', STER_PROGRAMS[0]!, 12, 'Alapkészletek (tükör, szonda, csipesz) ×8, tömőkészlet ×3, sebészi készlet ×1', { bio: dow(d) === 1 ? true : null }); continue }
+    cyc('08:15', STER_PROGRAMS[0]!, 12, 'Alapkészletek (tükör, szonda, csipesz) ×8, tömőkészlet ×3, sebészi készlet ×1', { bio: dow(d) === 1 ? true : null })
+    if (d === failDay) {
+      cyc('13:30', STER_PROGRAMS[0]!, 8, 'Alapkészletek ×6, endo készlet ×2', { chem: false, ok: false, note: 'A kémiai indikátor nem váltott át – a csomagok nem adhatók ki, újrasterilizálva.' })
+      cyc('14:20', STER_PROGRAMS[0]!, 8, 'Alapkészletek ×6, endo készlet ×2 (újrasterilizálás)', { note: 'Az előző, sikertelen ciklus csomagjai.' })
+    } else cyc('13:30', STER_PROGRAMS[0]!, 8, 'Alapkészletek ×6, endo készlet ×2')
+  }
+  // a kezelések műszercsomagja, EESZT-állapota, páciens-tájékoztatója
+  const okBy = (d: string, t = '23:59') => db.sterCycles.filter(c => c.ok && c.packs > 0 && (c.date < d || (c.date === d && c.time <= t))).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))[0]
+  const recent = db.records.filter(r => r.date < t0).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
+  recent.forEach((r, i) => {
+    if (r.date >= addDays(t0, -21)) r.sterBatch = okBy(r.date, r.time)?.batch || null
+    r.eeszt = r.date >= addDays(t0, -2) ? { status: 'pending' } : { status: 'sent', sentAt: r.date, ref: eesztRef() }
+    if (r.date >= addDays(t0, -10)) {
+      const text = patientInfoDraft(db, r)
+      r.patientInfo = i < 2 ? { text, status: 'draft' } : { text, status: 'sent', approvedBy: r.doctorId === 'olah' ? 'Dr. Oláh' : 'Dr. Csempesz', approvedAt: r.date, sentAt: r.date, channels: ['SMS'] }
+    }
+  })
+  // számlák a lezárt napokra (páciensenként és naponként egy)
+  const methods = ['card', 'cash', 'fund', 'transfer', 'card'] as const
+  const byPD: Record<string, TreatmentRecord[]> = {}
+  db.records.filter(r => r.date >= addDays(t0, -14) && r.date < addDays(t0, -1) && r.fee).forEach(r => { (byPD[r.patientId + '|' + r.date] = byPD[r.patientId + '|' + r.date] || []).push(r) })
+  Object.values(byPD).sort((a, b) => a[0]!.date.localeCompare(b[0]!.date)).forEach((list, i) => {
+    const p = db.patients.find(x => x.id === list[0]!.patientId)!
+    const method = methods[i % methods.length]!
+    const lines = list.map(r => ({ name: r.typeIds.map(id => db.types.find(t => t.id === id)?.name).join(', ') + (r.teeth.length ? ` (${r.teeth.join(', ')})` : ''), qty: 1, price: r.fee }))
+    db.invoices.push({ id: uid(), no: nextInvoiceNo(db, list[0]!.date), date: list[0]!.date, patientId: p.id, recordIds: list.map(r => r.id), payerName: p.name, payerAddress: p.address, method, fund: method === 'fund' ? 'OTP Egészségpénztár' : '', lines, total: lines.reduce((s, l) => s + l.price * l.qty, 0) })
+  })
+  // folyamatban lévő megrendelés (munkatárs adta le)
+  db.orders.push({ id: uid(), date: addDays(t0, -2), supplier: 'MedDent Nagykereskedés Zrt.', lines: [{ item: 'ideig', qty: 40 }], orderedBy: 'Fehér Kata (asszisztens)', status: 'ordered', note: 'Telefonon leadva, visszaigazolás e-mailben.' })
 }

@@ -18,7 +18,8 @@ const nav = [
   { to: '/kezeles', label: 'Kezelés', short: 'Kezelés', icon: 'tooth', match: (p: string) => p.startsWith('/kezeles') },
   { to: '/emlekeztetok', label: 'Emlékeztetők', short: 'Emlékezt.', icon: 'bell', match: (p: string) => p.startsWith('/emlekeztetok') },
   { to: '/raktar', label: 'Raktár', short: 'Raktár', icon: 'box', match: (p: string) => p.startsWith('/raktar') },
-  { to: '/beallitasok', label: 'Beállítások', short: 'Beáll.', icon: 'gear', match: (p: string) => p.startsWith('/beallitasok') || p.startsWith('/nevjegy') },
+  { to: '/sterilizalas', label: 'Sterilizálás', short: 'Steril.', icon: 'shield', match: (p: string) => p.startsWith('/sterilizalas') },
+  { to: '/beallitasok', label: 'Beállítások', short: 'Beáll.', icon: 'gear', match: (p: string) => p.startsWith('/beallitasok') || p.startsWith('/nevjegy') || p.startsWith('/sugo') },
 ]
 
 // PWA: új verzió esetén a felhasználó dönt az újratöltésről
@@ -35,7 +36,7 @@ onMounted(() => {
 <template>
   <div>
     <div class="topbar">
-      <span>{{ st.address }}</span><span>|</span><span>☎ {{ st.phone }}</span><span>|</span><span>Rendelés: hétfő–péntek {{ st.startHour }}:00–{{ st.endHour }}:00</span>
+      <span>{{ st.address }}</span><span>|</span><span>☎ {{ st.phone }}</span><span>|</span><span>Rendelés: hétfő–péntek {{ st.startHour }}:00–{{ st.endHour }}:00</span><span>|</span><NuxtLink to="/sugo" style="color:inherit;font-weight:700">? Súgó és kézikönyv</NuxtLink>
     </div>
     <header class="hdr">
       <NuxtLink to="/" class="brand">
@@ -78,7 +79,7 @@ onMounted(() => {
       </div>
       <div class="small" style="opacity:.75;max-width:420px;line-height:1.5">
         Molio {{ APP_VERSION }} – bemutató program kitalált adatokkal.<br>
-        Készült: <b>{{ SPEC.title }}</b> ({{ SPEC.version }}) alapján. <NuxtLink to="/nevjegy">Névjegy</NuxtLink>
+        Készült: <b>{{ SPEC.title }}</b> ({{ SPEC.version }}) alapján. <NuxtLink to="/nevjegy">Névjegy</NuxtLink> · <NuxtLink to="/sugo">Felhasználói kézikönyv (PDF)</NuxtLink>
       </div>
       <div class="dots"><i style="background:#ec2f7b" /><i style="background:#f5891f" /><i style="background:#13b0a5" /><i style="background:#3fa463" /><i style="background:#8b4fe0" /><i style="background:#2a8ccc" /></div>
     </footer>

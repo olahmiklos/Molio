@@ -2,11 +2,11 @@
 
 Fogorvosi rendelőkezelő program diktálással (Nuxt 3 PWA, Pinia, Prisma, PostgreSQL).
 
-> **Készült a `Molio_fogorvosi_szoftver_specifikacio_v1.9` dokumentum alapján**
-> (Molio — Fogorvosi Szoftver — Funkcionális Specifikáció, **v1.9**, utolsó módosítás: 2026. november 16.).
+> **Készült a `Molio_fogorvosi_szoftver_specifikacio_v2.0` dokumentum alapján**
+> (Molio — Fogorvosi Szoftver — Funkcionális Specifikáció, **v2.0**, utolsó módosítás: 2026. november 17.).
 > A verzió és a specifikáció hivatkozása az alkalmazásban is látszik: lábléc és **Beállítások → Névjegy**.
 
-Ez az **1.0 bemutató (demó) verzió**: kitalált mintaadatokkal (Cooldent Kft.), szerver és adatbázis nélkül.
+Ez a **2.0 bemutató (demó) verzió**: kitalált mintaadatokkal (Cooldent Kft.), szerver és adatbázis nélkül.
 Az adatok a böngésző tárolójában (IndexedDB) vannak, ezért a módosítások csak az adott eszközön és böngészőben látszanak.
 AI-feldolgozás nincs benne, a diktálást a böngésző beépített magyar beszédfelismerése alakítja szöveggé, a mezőket szabályok töltik ki.
 
@@ -14,7 +14,16 @@ AI-feldolgozás nincs benne, a diktálást a böngésző beépített magyar besz
 
 - **Recepció:** páciensek (egészségügyi figyelmeztetés + rejtett belső megjegyzés), két fogorvos naptára napi/heti/havi nézetben, ráhagyási sávok, ütközésfigyelés, szabad időpontok, emlékeztetők előnézete és szimulált küldése, a meg nem jelenés szabályalapú kockázata.
 - **Kezelés:** diktálás, fogszám-felismerés (FDI-szám, „tizenhatos”, „jobb felső hatos”, tejfogak „tejfog”/„római” jelöléssel), fogfelszínek (M, O/I, D, V, L) és bővítés kezelés közben, anyagjavaslat és összevetés, díj a felszínek száma szerint, ívelt röntgenszerű fogtérkép előzményekkel és röntgenkép-váltással, fogazati státusz diktálással, csatolmányok, PDF ügyfélkarton.
-- **Raktár:** készlet, automatikus levonás, 60 napos előrejelzés és rendelési határidő, bevételezés, törzsadatok, kezelési csomagok és felismerési szótár szerkesztése.
+- **Raktár:** készlet, automatikus levonás, 60 napos előrejelzés és rendelési határidő, bevételezés egységárral és **gördülő súlyozott átlagárral**, gyártási szám (LOT) és lejárat, kiadás lejárat szerint, rendelési javaslat (a rendelést munkatárs adja le), implantátum-nyomonkövetés és LOT-keresés visszahíváshoz, törzsadatok, kezelési csomagok és felismerési szótár szerkesztése.
+- **v2.0:** beleegyező nyilatkozat tableten aláírva (PDF a kartonba), közérthető páciens-tájékoztató orvosi jóváhagyással, kontroll-meghívók (recall), sterilizációs napló, EESZT-jelentés és számla előkészítése (szemléltetés).
+
+## Felhasználói kézikönyv
+
+A kézikönyv forrása a `docs/kezikonyv.md`. Minden buildnél (`nuxt build` / `nuxt generate`, a `build:before` hookban) a
+`scripts/build-manual.mjs` PDF-et készít belőle a `public/kezikonyv/` mappába (nincs verziókezelve), a program pedig a
+**Súgó** oldalon (`/#/sugo`) adja letöltésre. Így az éles oldal kézikönyve akkor frissül, amikor új verzió kerül a `main` ágra;
+a `teszt` ág előnézetében a címlap „teszt-előnézet” jelzést kap. Kézi előállítás: `npm run manual`.
+Új funkciónál a `docs/kezikonyv.md` megfelelő fejezetét is frissíteni kell.
 
 ## Publikálás Cloudflare Pages-re
 

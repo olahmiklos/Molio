@@ -10,3 +10,6 @@ dist
 !.env.example
 *.log
 .DS_Store
+
+# a buildkor generált felhasználói kézikönyv
+public/kezikonyv/
