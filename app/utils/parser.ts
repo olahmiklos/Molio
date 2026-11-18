@@ -152,9 +152,18 @@ export interface ParseResult {
   surfaces: SurfaceMap
   orphanSurfaces: Surface[]
   types: string[]
+  /** a diktált teljes mennyiség anyagonként */
   qty: Record<string, number>
+  /** „még / plusz N”, amikor előtte nem hangzott el szám: a csomag szerinti mennyiséghez adandó többlet */
+  rel: Record<string, number>
   offDentition: number[]
 }
+
+/** mennyiségjelző és töltelékszavak a szám és az anyagnév között */
+const FILLER = new Set(['darab', 'darabot', 'db', 'adag', 'adagot', 'par', 'part', 'ml', 'kerek', 'kell', 'kellett', 'hasznaltam', 'hasznaltunk', 'ment', 'fogyott', 'el', 'ebbol', 'abbol', 'osszesen', 'kb', 'korulbelul'])
+const REL_WORDS = new Set(['meg', 'plusz', 'pluszban', 'tovabbi', 'ujabb'])
+/** az anyagnév után álló szám csak akkor mennyiség, ha mértékegység, ige vagy tagmondatvég követi */
+const afterNumOk = (t: string | undefined) => !t || t === '|' || FILLER.has(t) || REL_WORDS.has(t) || /^(ot|et|at|ast|est|ost)$/.test(t)
 
 interface ParseCtx { types: TreatmentType[]; items: Item[] }
 
@@ -212,27 +221,51 @@ export function analyze(text: string, st: ParseCtx, opts: { dentition?: Dentitio
     if (o && m.i > o.i) o.ext = Math.max(o.ext || 0, m.i + m.span - 1)
   })
   const keptIdx = new Set<number>(); kept.forEach(m => { for (let k = 0; k < m.span; k++) keptIdx.add(m.i + k) })
+  // mennyiség: a kimondott szám az anyag teljes mennyisége („5 darab polírpaszta” = 5, nem a csomag + különbözet);
+  // „még / plusz / további N” a csomaghoz ad hozzá; „3 helyett 5” javítás; puszta említés csak akkor 1, ha számot nem mondtak
+  const abs: Record<string, number> = {}, rel: Record<string, number> = {}, bare = new Set<string>()
+  const stopAt = (j: number) => toks[j] === '|' || toothIdx.has(j) || keptIdx.has(j) || isTypeKw(j)
+  const put = (id: string, n: number, relative: boolean) => { if (relative) rel[id] = (rel[id] || 0) + n; else abs[id] = (abs[id] || 0) + n }
+  const isRelAt = (j: number) => REL_WORDS.has(toks[j] || '')
   kept.forEach(m => {
     const it = m.it, i = m.i, span = m.span, L = last[it.id]
     const between = L ? toks.slice(L.end + 1, i) : []
     if (L && i - L.end <= 2 && !between.includes('|') && !between.some((_, k) => keptIdx.has(L.end + 1 + k))) {
       // ugyanaz az említés („érzéstelenítés két ampulla”) – ha közben szám hangzik el, az számít
-      if (L.def) for (let j = i - 1; j > L.end; j--) { const n = numVal(toks[j]); if (n !== null) { qty[it.id] = (qty[it.id] || 0) + n - 1; L.def = false; break } }
+      if (L.def) for (let j = i - 1; j > L.end; j--) { const n = numVal(toks[j]); if (n !== null) { bare.delete(it.id); put(it.id, n, isRelAt(j - 1)); L.def = false; break } }
       L.end = i + span - 1; return
     }
-    let q: number | null = null
+    let q: number | null = null, qAt = -1
     for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
-      if (toks[j] === '|' || toothIdx.has(j) || keptIdx.has(j)) break
-      const n = numVal(toks[j]); if (n !== null) { q = n; break }
+      if (stopAt(j)) break
+      const n = numVal(toks[j]); if (n !== null) { q = n; qAt = j; break }
     }
-    const end = Math.max(i + span - 1, m.ext || 0)
-    if (q === null && m.ext) for (let j = i + span; j <= m.ext; j++) { const n = numVal(toks[j]); if (n !== null) { q = n; break } }
+    let end = Math.max(i + span - 1, m.ext || 0)
+    if (q === null && m.ext) for (let j = i + span; j <= m.ext; j++) { const n = numVal(toks[j]); if (n !== null) { q = n; qAt = j; break } }
+    // szám az anyag neve után: „polírpaszta 5 darab”, „polírpasztából ötöt kérek”, „polírpasztát 5-öt”
+    if (q === null) {
+      for (let j = end + 1; j <= Math.min(toks.length - 1, end + 3); j++) {
+        if (stopAt(j)) break
+        const n = numVal(toks[j])
+        if (n !== null) { if (afterNumOk(toks[j + 1])) { q = n; qAt = j; end = Math.max(end, j) } break }
+        if (!FILLER.has(toks[j]!) && !REL_WORDS.has(toks[j]!)) break
+      }
+    }
+    // javítás: „3 polírpaszta helyett 5”, „polírpasztából nem 3, hanem 5”
+    for (let j = end + 1; j <= Math.min(toks.length - 2, end + 2); j++) {
+      if (toks[j] === 'helyett' || toks[j] === 'hanem') { const n = numVal(toks[j + 1]); if (n !== null) { q = n; qAt = j + 1; end = j + 1 } break }
+    }
     if (q === null && isTypeKw(end + 1)) { last[it.id] = { end, def: false }; return } // pl. „kompozit tömés” – csak a kezelést jelzi
     const def = q === null
-    if (def) q = 1
-    qty[it.id] = (qty[it.id] || 0) + q!
+    if (def) bare.add(it.id)
+    else put(it.id, q!, isRelAt(qAt - 1) || toks[qAt + 1] === 'pluszban')
     last[it.id] = { end, def }
   })
+  // „még N” a már diktált mennyiséghez ad hozzá; ha előtte nem mondtak számot, a csomag szerintihez
+  const relPkg: Record<string, number> = {}
+  Object.entries(abs).forEach(([id, n]) => { qty[id] = n + (rel[id] || 0) })
+  Object.entries(rel).forEach(([id, n]) => { if (abs[id] === undefined) relPkg[id] = n })
+  bare.forEach(id => { if (abs[id] === undefined && rel[id] === undefined) qty[id] = 1 })
 
   const sm: SurfaceMap = {}
   Object.entries(surfaces).forEach(([n, set]) => { sm[n] = [...set] })
@@ -243,6 +276,7 @@ export function analyze(text: string, st: ParseCtx, opts: { dentition?: Dentitio
     orphanSurfaces: [...orphan],
     types: [...types],
     qty,
+    rel: relPkg,
     offDentition: opts.dentition ? tl.filter(n => dentitionOf(n) !== opts.dentition) : [],
   }
 }

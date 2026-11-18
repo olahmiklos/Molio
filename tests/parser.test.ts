@@ -64,6 +64,30 @@ describe('anyagok és mennyiségek (index.html szabályai)', () => {
   it('ismétlés összeadódik', () => {
     expect(A('három tampont kérek. még két tampont').qty.tamp).toBe(5)
   })
+  it('a diktált szám a teljes mennyiség, nem különbözet', () => {
+    const r = A('Fogkőeltávolítás. Kérek 5 darab polírpasztát.')
+    expect(r.qty.polir).toBe(5)
+    expect(r.rel.polir).toBeUndefined()
+  })
+  it('puszta említés nem adódik a diktált számhoz', () => {
+    expect(A('fogkőeltávolítás polírpasztával. 5 darab polírpasztát kérek.').qty.polir).toBe(5)
+    expect(A('kérek 5 darab polírpasztát. Polírpaszta.').qty.polir).toBe(5)
+  })
+  it('szám az anyagnév után', () => {
+    expect(A('polírpaszta 5 db').qty.polir).toBe(5)
+    expect(A('polírpasztából ötöt kérek').qty.polir).toBe(5)
+    expect(A('polírpasztát 5-öt kérek').qty.polir).toBe(5)
+    expect(A('fogkő eltávolítás, polírpasztából 5 darabot használtam').qty.polir).toBe(5)
+  })
+  it('javítás: helyett', () => {
+    expect(A('3 polírpaszta helyett 5').qty.polir).toBe(5)
+  })
+  it('még / plusz szám nélküli előzménnyel: a csomaghoz adódik', () => {
+    const r = A('fogkőeltávolítás, kérek még 2 polírpasztát')
+    expect(r.qty.polir).toBeUndefined()
+    expect(r.rel.polir).toBe(2)
+    expect(A('polírpaszta plusz kettő').rel.polir).toBe(2)
+  })
   it('ideiglenes után nem tömés', () => {
     expect(A('ideiglenes tömés').types).not.toContain('tomes')
   })

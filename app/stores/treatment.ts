@@ -14,7 +14,7 @@ import { consumeStock, previewLots, returnStock } from '~/utils/stock'
 import { patientInfoDraft, usableBatches } from '~/utils/office'
 
 export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual'
-export interface MatRow { id: string; pk: number; dq?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean }
+export interface MatRow { id: string; pk: number; dq?: number; dRel?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean }
 
 interface Session {
   key: string
@@ -42,7 +42,7 @@ interface Session {
   statusEdits: Record<string, string[]>
 }
 
-const EMPTY_PARSE: ParseResult = { teeth: [], surfaces: {}, orphanSurfaces: [], types: [], qty: {}, offDentition: [] }
+const EMPTY_PARSE: ParseResult = { teeth: [], surfaces: {}, orphanSurfaces: [], types: [], qty: {}, rel: {}, offDentition: [] }
 
 export const useTreatmentStore = defineStore('treatment', () => {
   const data = useDataStore()
@@ -146,10 +146,12 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const x = s.value; if (!x) return []
     const teeth = x.teeth
     const pkg = pkgFor(db.value, x.types, Math.max(1, teeth.length), surfacesFor(teeth, surfaces.value))
-    const ids = new Set([...Object.keys(pkg), ...Object.keys(parsed.value.qty), ...x.extra])
+    const ids = new Set([...Object.keys(pkg), ...Object.keys(parsed.value.qty), ...Object.keys(parsed.value.rel || {}), ...x.extra])
     const order = db.value.items.map(i => i.id)
     return [...ids].filter(id => db.value.items.some(i => i.id === id)).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(id => {
-      const pk = pkg[id] || 0, dq = parsed.value.qty[id]
+      // a diktált szám a teljes mennyiség; „még / plusz N” esetén a csomag + N
+      const pk = pkg[id] || 0, abs = parsed.value.qty[id], dRel = parsed.value.rel?.[id]
+      const dq = abs !== undefined ? abs : dRel !== undefined ? pk + dRel : undefined
       let st: RowState
       if (dq === undefined && pk > 0) st = 'pkg'
       else if (dq !== undefined && pk === 0) st = 'dict'
@@ -158,7 +160,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
       else st = 'manual'
       const auto = dq !== undefined ? dq : pk > 0 ? pk : 1
       const qty = x.overrides[id] !== undefined ? x.overrides[id]! : auto
-      return { id, pk, dq, st, auto, qty, manual: x.overrides[id] !== undefined && x.overrides[id] !== auto, checked: !x.unchecked.includes(id) }
+      return { id, pk, dq, dRel, st, auto, qty, manual: x.overrides[id] !== undefined && x.overrides[id] !== auto, checked: !x.unchecked.includes(id) }
     })
   })
   const toReview = computed(() => rows.value.filter(r => r.checked && (r.st === 'diff' || r.st === 'dict')).length)

@@ -242,7 +242,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
                   <td><b>{{ db.items.find(i => i.id === r.id)?.name }}</b><div class="small muted">{{ db.items.find(i => i.id === r.id)?.group }}</div>
                     <div v-for="l in (r.checked ? tx.lotPreview(r.id, r.qty) : [])" :key="l.lot" class="small" :style="l.expiry && l.expiry < today() ? 'color:var(--red);font-weight:700' : 'color:var(--blue-d)'">LOT {{ l.lot }} · lejár: {{ l.expiry ? fmtDate(l.expiry) : '–' }}{{ l.expiry && l.expiry < today() ? ' – LEJÁRT!' : '' }}{{ tx.lotPreview(r.id, r.qty).length > 1 ? ` (${l.qty})` : '' }}</div></td>
                   <td class="hide-m">{{ r.pk ? `${r.pk} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}</td>
-                  <td class="hide-m">{{ r.dq !== undefined ? `${r.dq} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}</td>
+                  <td class="hide-m">{{ r.dq !== undefined ? `${r.dq} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}<div v-if="r.dRel" class="small muted">csomag + {{ r.dRel }}</div></td>
                   <td class="nowrap"><input class="q" type="number" min="0" step="1" :value="r.qty" @change="tx.setQty(r.id, Number(($event.target as HTMLInputElement).value))"> {{ db.items.find(i => i.id === r.id)?.unit }}
                     <button v-if="r.manual" class="reset" :title="`Vissza a javasolt értékre (${r.auto})`" @click="tx.resetQty(r.id)">↺</button></td>
                   <td>
