@@ -13,6 +13,7 @@ import { guessDocType } from '~/utils/defaults'
 import { useRepository } from '~/repositories'
 import { consumeStock, previewLots, returnStock } from '~/utils/stock'
 import { patientInfoDraft, usableBatches } from '~/utils/office'
+import { draftExpiry, liveDrafts } from '~/utils/v22'
 
 export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual'
 export interface MatRow { id: string; pk: number; dq?: number; dRel?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean }
@@ -55,6 +56,8 @@ interface Session {
   statusOff: string[]
   statusManual: Record<string, string[]>
   confirmedConf: string[]
+  /** a ⚠ jelölésű anyagsorok, amelyeket az orvos / asszisztens megerősített (spec v2.2, 4. pont) */
+  confirmedRows: string[]
 }
 
 export type SItemState = 'done' | 'postponed' | 'suggested'
@@ -83,7 +86,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const dentition = computed(() => patient.value?.dentition || 'permanent')
 
   function base(o: Partial<Session> & { patientId: string; doctorId: string; date: string; time: string }): Session {
-    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], ...o }
+    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], confirmedRows: [], ...o }
   }
   const nowSlot = () => fromMin(Math.min(Math.max(Math.floor(nowMin() / 30) * 30, db.value.settings.startHour * 60), db.value.settings.endHour * 60 - 30))
 
@@ -107,11 +110,28 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const teeth = [...new Set(planItems.map(i => i.tooth).filter((n): n is number => !!n))]
     s.value = base({ patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: today(), time: a.date === today() ? a.start : nowSlot(), types: [...a.typeIds], planned, teeth, assign, planItems, hasPlan: true, manualSurf: planned ? { ...JSON.parse(JSON.stringify(planned.surfaces)), ...surf } : surf })
     parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
+    restoreDraft()
   }
   function startNew(pid: string) {
-    s.value = base({ patientId: pid, doctorId: db.value.doctors[0]!.id, date: today(), time: nowSlot() })
+    const pdoc = patients.byId(pid)?.doctorId
+    s.value = base({ patientId: pid, doctorId: pdoc || db.value.doctors[0]!.id, date: today(), time: nowSlot() })
     parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
+    restoreDraft()
   }
+  /* ---------- diktálási piszkozat (spec v2.2, 4. pont): 7 napig megmarad, készletet nem von le ---------- */
+  const draftOf = (pid: string, apptId: string | null) => liveDrafts(db.value).find(d => d.patientId === pid && d.appointmentId === apptId)
+  const restored = ref(false)
+  function restoreDraft() {
+    const x = s.value; restored.value = false; if (!x || x.recordId) return
+    const d = draftOf(x.patientId, x.appointmentId)
+    if (d && d.text.trim()) { x.text = d.text; restored.value = true; applyParse() }
+  }
+  function saveDraft() {
+    const x = s.value; if (!x || x.recordId) return
+    db.value.drafts = liveDrafts(db.value).filter(d => !(d.patientId === x.patientId && d.appointmentId === x.appointmentId))
+    if (x.text.trim()) db.value.drafts.push({ id: uid(), patientId: x.patientId, appointmentId: x.appointmentId, recordId: null, doctorId: x.doctorId, text: x.text, savedAt: new Date().toISOString(), expires: draftExpiry() })
+  }
+  function dropDraft(pid: string, apptId: string | null) { db.value.drafts = db.value.drafts.filter(d => !(d.patientId === pid && d.appointmentId === apptId)) }
   function editRecord(rid: string) {
     const r = db.value.records.find(x => x.id === rid); if (!r) return
     const assign: Record<string, string[]> = {}, itemState: Session['itemState'] = {}
@@ -134,8 +154,10 @@ export const useTreatmentStore = defineStore('treatment', () => {
     if (!s.value) return
     s.value.text = v
     if (timer) clearTimeout(timer)
-    timer = setTimeout(applyParse, delay)
+    timer = setTimeout(() => { applyParse(); saveDraft() }, delay)
   }
+  /** a diktálás végén azonnali feldolgozás: az előnézet azonnal elkészül, nem vár a késleltetésre */
+  function finishDictation() { if (timer) clearTimeout(timer); applyParse(); saveDraft() }
   function applyParse() {
     if (!s.value) return
     const x = s.value
@@ -302,9 +324,10 @@ export const useTreatmentStore = defineStore('treatment', () => {
       return { id, pk, dq, dRel, st, auto, qty, manual: x.overrides[id] !== undefined && x.overrides[id] !== auto, checked: !x.unchecked.includes(id) }
     })
   })
-  const toReview = computed(() => rows.value.filter(r => r.checked && (r.st === 'diff' || r.st === 'dict')).length)
+  const toReview = computed(() => s.value?.recordId ? 0 : rows.value.filter(r => r.checked && (r.st === 'diff' || r.st === 'dict') && !s.value?.confirmedRows.includes(r.id)).length)
+  const confirmRow = (id: string) => { const x = s.value; if (x && !x.confirmedRows.includes(id)) x.confirmedRows.push(id) }
   function setChecked(id: string, on: boolean) { const x = s.value; if (!x) return; x.unchecked = on ? x.unchecked.filter(v => v !== id) : [...x.unchecked, id] }
-  function setQty(id: string, v: number) { if (s.value) s.value.overrides[id] = Math.max(0, Number(v) || 0) }
+  function setQty(id: string, v: number) { if (s.value) { s.value.overrides[id] = Math.max(0, Number(v) || 0); confirmRow(id) } }
   function resetQty(id: string) { if (s.value) delete s.value.overrides[id] }
   function addMaterial(id: string) { const x = s.value; if (!x) return; if (!x.extra.includes(id)) x.extra.push(id); setChecked(id, true); if (x.overrides[id] === undefined) x.overrides[id] = 1 }
 
@@ -331,6 +354,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   /* ---------- mentés ---------- */
   function cancel() {
     const x = s.value; if (!x) return
+    saveDraft()
     const repo = useRepository()
     db.value.attachments.filter(a => a.sessKey === x.key).forEach(a => repo.deleteFile(a.id))
     db.value.attachments = db.value.attachments.filter(a => a.sessKey !== x.key)
@@ -344,6 +368,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const x = s.value; if (!x) return null
     if (!items.value.length && !x.text.trim()) return { error: 'Válassz kezelést vagy diktálj leírást.' }
     if (sideConflicts.value.length) return { error: 'Oldal és fogszám ellentmond (' + sideConflicts.value.map(c => c.said).join(', ') + '). Erősítsd meg a fogszámot a mentés előtt.' }
+    if (toReview.value) return { error: `${toReview.value} ⚠ jelölésű anyagsort meg kell erősíteni (Megerősítem, vagy módosítsd a mennyiséget), mielőtt a kezelés véglegesíthető.` }
     const mats = rows.value.filter(r => r.checked && r.qty > 0).map(r => ({ item: r.id, qty: r.qty }))
     const before: Record<string, number> = {}; db.value.items.forEach(i => { before[i.id] = i.stock })
     const done = doneItems.value
@@ -405,6 +430,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     // diktált fogállapot-változás: rögzítés a státuszba, a kezelés napjával (4. pont)
     const chg = statusChanges.value
     if (chg.length) { const m: Record<string, string[]> = {}; chg.forEach(c => { m[c.tooth] = c.to }); patients.addStatus(x.patientId, m, 'Diktálásból rögzítve', 'dictation') }
+    dropDraft(x.patientId, x.appointmentId)
     const nSug = suggestList.value.length
     const pid = x.patientId
     s.value = null
@@ -454,7 +480,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     items, doneItems, itemTotal, setItemState, removeItem, addItem, itemParse, suggestList, addSuggestion, removeSuggestion, setSuggestion, statusChanges, setStatusChange, sideConflicts, confirmConflict, dictStatus,
     surfaces, toggleSurface, needsSurface, missingSurface, extendedTeeth, offDentition,
     rows, toReview, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
-    attachments, upload, cancel, hasUnsaved, approve,
+    attachments, upload, cancel, hasUnsaved, approve, finishDictation, confirmRow, saveDraft, restored, draftOf, dropDraft,
     setMode, setStatusText, statusDraft, setToothStatus, statusConflicts, approveStatus, discardStatus, isDoneAppt,
   }
 })

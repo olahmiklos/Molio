@@ -6,6 +6,7 @@ import type { Dentition, Patient, StatusSnapshot } from '~/utils/types'
 import { attendanceStats, doctorName, extractTodo, firstSentence, recordForAppt, riskFor, typeNames, type Risk } from '~/utils/logic'
 import { suggestDentition, teethStr } from '~/utils/teeth'
 import { docTypeName } from '~/utils/defaults'
+import { overlaps } from '~/utils/calendar'
 
 export interface SummaryLine { kind: 'base' | 'warn' | 'last' | 'todo' | 'hist' | 'att' | 'attend' | 'next'; text: string; strong?: string; risk?: Risk }
 
@@ -43,6 +44,27 @@ export const usePatientStore = defineStore('patient', () => {
     const p = byId(id); if (!p) return
     if (patch.dentition && patch.dentition !== p.dentition) p.dentitionHistory.push({ date: today(), to: patch.dentition })
     Object.assign(p, patch)
+  }
+  /** kezelő orvos váltása (spec v2.2, 5. pont): naplóz; a jövőbeli időpontok átkerülnek az új orvoshoz, ütközést ellenőrizve; a nem átvihető időpontok listája a visszatérés */
+  function changeDoctor(pid: string, to: string, o: { by: string; reason: string; transfer: boolean }) {
+    const p = byId(pid); if (!p) return { moved: 0, conflicts: [] as string[] }
+    const from = p.doctorId || null
+    ;(p.doctorLog ||= []).push({ at: new Date().toISOString(), by: o.by, from, to, reason: o.reason })
+    p.doctorId = to
+    let moved = 0; const conflicts: string[] = []
+    if (o.transfer) {
+      upcoming(pid).forEach(a => {
+        if (a.doctorId === to) return
+        const clash = overlaps(db.value, to, a.date, a.start, a.dur, a.buffer, a.id)
+        if (clash) { conflicts.push(`${fmtDate(a.date)} ${a.start}`); return }
+        a.doctorId = to; (a.items || []).forEach(i => { i.doctorId = to })
+        db.value.suggestions.filter(s => s.appointmentId === a.id).forEach(s => { s.performerId = to })
+        moved++
+      })
+    }
+    // a még nem ütemezett javasolt tételek végző orvosa a páciens új kezelő orvosa
+    db.value.suggestions.filter(s => s.patientId === pid && (s.status === 'new' || s.status === 'contacted' || s.status === 'postponed')).forEach(s => { s.performerId = to })
+    return { moved, conflicts }
   }
   function setDentition(id: string, d: Dentition) { update(id, { dentition: d }) }
   function findDuplicate(name: string, birth: string) { return db.value.patients.find(x => norm(x.name) === norm(name) && x.birth === birth) }
@@ -90,5 +112,5 @@ export const usePatientStore = defineStore('patient', () => {
     if (next) L.push({ kind: 'next', text: `Következő időpont: ${fmtDate(next.date)} ${next.start}, ${typeNames(db.value, next.typeIds)}`, risk: riskFor(db.value, next) })
     return L
   }
-  return { sorted, byId, search, recordsOf, lastRecord, upcoming, age, suggestedDentition, create, update, setDentition, findDuplicate, latestStatus, addStatus, summary }
+  return { sorted, byId, search, recordsOf, lastRecord, upcoming, age, suggestedDentition, create, update, changeDoctor, setDentition, findDuplicate, latestStatus, addStatus, summary }
 })

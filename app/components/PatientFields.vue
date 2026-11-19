@@ -1,16 +1,20 @@
 <script setup lang="ts">
 // Páciens adatai: két külön megjegyzésmező (egészségügyi figyelmeztetés / belső megjegyzés), fogazat, ráhagyás
 import { usePatientStore } from '~/stores/patient'
+import { useDataStore } from '~/stores/data'
 import type { Dentition } from '~/utils/types'
 import { ageOn, today } from '~/utils/dates'
 
 export interface PatientDraft {
   name: string; birth: string; taj: string; phone: string; email: string; address: string
   healthWarning: string; internalNote: string; needsBuffer: boolean; dentition: Dentition
+  /** kezelő orvos – új páciensnél kötelező (spec v2.2, 5. pont) */
+  doctorId: string | null
 }
 const m = defineModel<PatientDraft>({ required: true })
 const props = defineProps<{ isNew?: boolean }>()
 const patients = usePatientStore()
+const data = useDataStore()
 const touchedDent = ref(!props.isNew)
 const suggested = computed(() => (m.value.birth ? patients.suggestedDentition(m.value.birth) : null))
 const age = computed(() => (m.value.birth ? ageOn(m.value.birth, today()) : null))
@@ -28,6 +32,13 @@ function setDent(d: Dentition) { touchedDent.value = true; m.value.dentition = d
       <div class="field"><label class="f">Telefon *</label><input v-model="m.phone" class="inp" placeholder="+36 30 123 4567" inputmode="tel"></div>
       <div class="field"><label class="f">E-mail</label><input v-model="m.email" class="inp" type="email" inputmode="email"></div>
       <div class="field"><label class="f">Lakcím</label><input v-model="m.address" class="inp"></div>
+    </div>
+    <div class="field">
+      <label class="f">Kezelő orvos <span v-if="isNew" class="n">* kötelező – az ő pácienseként kerül nyilvántartásba</span></label>
+      <select v-model="m.doctorId" class="inp" :style="isNew && !m.doctorId ? 'border-color:#f6b7c3' : ''">
+        <option :value="null">{{ isNew ? '– válassz orvost –' : '– nincs megadva –' }}</option>
+        <option v-for="d in data.db.doctors" :key="d.id" :value="d.id">{{ d.name }}</option>
+      </select>
     </div>
     <div class="field">
       <label class="f">⚕ Egészségügyi figyelmeztetés <span class="n">(csak az ellátást befolyásoló adat: allergia, érzékenység, vérhígító, várandósság… – mindig látszik és a PDF-re is rákerül)</span></label>

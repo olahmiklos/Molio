@@ -87,7 +87,12 @@ export function defaultRecallTemplates(): MsgTemplate[] {
     { id: 'rovid', name: 'Rövid emlékeztető', text: 'Kedves {név}! Esedékes a(z) {felülvizsgálat}, mert legutóbb {kezelés dátuma} napján volt nálunk ({kezelés}). Időpont: {telefon}. {klinika}' },
   ]
 }
-export const SUGGEST_TPL = 'Kedves {név}! A legutóbbi vizsgálaton javasolt kezelés: {kezelés}{fogak}. Kérjük, egyeztessen időpontot a {telefon} számon. Üdvözlettel: {klinika}'
+/** „egyeztessen időpontot” üzenet (kézi indítás, udvarias, kérő hangnem – spec v2.2, 8. pont) */
+export const SUGGEST_TPL = 'Kedves {név}! A(z) {forras_kezeles} orvosunk néhány további kezelést javasolt ({javasolt_kezelések}). Szeretnénk segíteni az időpont egyeztetésében, ezért kérjük, szíves kényelmében keresse rendelőnket a {rendelo_telefon} telefonszámon, vagy válaszoljon erre az üzenetre, és munkatársunk felveszi Önnel a kapcsolatot. Köszönjük megértését, jó egészséget kívánunk! {klinika}'
+/** tájékoztató a rögzített időpontról és a javasolt kezelésekről (csak rögzített időponttal küldhető – spec v2.2, 8. pont) */
+export const INFORM_TPL = 'Kedves {név}! A(z) {forras_kezeles} javasolt kezelések ({javasolt_kezelések}) elvégzésére {kovetkezo_idopont} időpontja van a {klinika} rendelőjében ({orvos}). Ha nem tud jönni, kérjük, válaszoljon NEM-mel, vagy hívja a {rendelo_telefon} számot. Üdvözlettel: {klinika}'
+/** a v2.1-es (felszólító hangnemű) egyeztető sablon, amelyet a migráció udvariasra cserél */
+export const OLD_SUGGEST_TPL = 'Kedves {név}! A legutóbbi vizsgálaton javasolt kezelés: {kezelés}{fogak}. Kérjük, egyeztessen időpontot a {telefon} számon. Üdvözlettel: {klinika}'
 
 /** a dokumentumtípusok (2.2.3) */
 export const DOC_TYPES: [string, string][] = [

@@ -37,8 +37,10 @@ export interface Settings {
   statusDict: StatusDef[]
   /** kontroll-emlékeztető üzenetsablonok (2.1.2; admin/beállítások menüben szerkeszthető) */
   recallTemplates: MsgTemplate[]
-  /** „javasolt kezelés – egyeztessen időpontot” üzenetsablon */
+  /** „javasolt kezelés – egyeztessen időpontot” üzenetsablon (udvarias, kérő hangnem – spec v2.2, 8. pont) */
   suggestTemplate: string
+  /** tájékoztató a páciensnek a rögzített időpontról és a javasolt kezelésekről (spec v2.2, 8. pont) */
+  informTemplate?: string
   /** szinonimatábla a diktálás értelmezéséhez (5. pont) */
   synonyms?: Synonym[]
 }
@@ -119,6 +121,10 @@ export interface Patient {
   statuses: StatusSnapshot[]
   created: string
   remind: RemindChoice
+  /** kezelő (fő-) orvos (spec v2.2, 5. pont); a v2.2 előtt felvett páciensnél hiányozhat */
+  doctorId?: string | null
+  /** a kezelő orvos módosításainak naplója */
+  doctorLog?: { at: string; by: string; from: string | null; to: string; reason: string }[]
 }
 
 export interface Planned { teeth: number[]; surfaces: SurfaceMap }
@@ -145,9 +151,53 @@ export interface Appointment {
   items?: PlannedItem[]
   /** a páciens „NEM” választ küldött az emlékeztetőre: lemondást jelzett, az asszisztens zárja le */
   cancelSignal?: { at: string; text: string }
+  /** a páciens egyéb válaszai az emlékeztetőre (üzenet az asszisztensnek, v2.1 9. pont); lezárásig a Teendők között */
+  replies?: { id: string; at: string; text: string; done?: boolean }[]
+  /** összevonás: a ide beolvasztott időpontok azonosítói (spec v2.2, 2. pont) */
+  mergedFrom?: string[]
 }
 
-export interface PlannedItem { tooth: number | null; typeId: string; surfaces: Surface[] }
+/** foglalt tétel: fog, művelet, felszín; javasolt eredetű tételnél a javaslat azonosítója és a végző orvos (spec v2.2, 6–7. pont) */
+export interface PlannedItem { tooth: number | null; typeId: string; surfaces: Surface[]; suggestionId?: string; doctorId?: string | null }
+
+/** törölt vagy lemondott jövőbeli időpont: „törölve” állapotban megmarad, 30 napig visszaállítható (spec v2.2, 2. pont) */
+export interface DeletedAppt {
+  id: string
+  appt: Appointment
+  kind: 'delete' | 'cancel' | 'merged'
+  reason: string
+  at: string
+  by: string
+  /** a törlés után a tételekkel történtek (naplóhoz) */
+  fate: string
+  /** az érintett javaslatok azonosítói, visszaállításkor újra az időponthoz kötődnek */
+  suggestionIds: string[]
+  notified?: boolean
+}
+
+/** a diktálás nem mentett piszkozata: 7 napig marad meg, készletet nem von le (spec v2.2, 4. pont) */
+export interface Draft {
+  id: string
+  patientId: string
+  appointmentId: string | null
+  recordId: string | null
+  doctorId: string
+  text: string
+  savedAt: string
+  expires: string
+}
+
+/** páciens-tájékoztató (időpont + javasolt kezelések) kiküldésének vagy mellőzésének naplója (spec v2.2, 8. pont) */
+export interface InformLog {
+  id: string
+  patientId: string
+  appointmentIds: string[]
+  at: string
+  kind: 'sent' | 'skipped'
+  channel: string
+  text: string
+  reason?: string
+}
 
 /** kezelési tétel egy vizitben (2. pont): egy fog + egy művelet */
 export type ItemOrigin = 'planned' | 'added' | 'manual'
@@ -311,6 +361,10 @@ export interface Suggestion {
   callback?: boolean
   droppedBy?: string
   closedNote?: string
+  /** végző orvos (spec v2.2, 7. pont); alapértelmezés: a páciens kezelő orvosa */
+  performerId?: string | null
+  /** „újra megerősítve” bejegyzések: ugyanazt javasolta egy későbbi vizit is (spec v2.2, 6. pont) */
+  confirms?: { date: string; recordId: string | null; doctorId: string }[]
 }
 
 /** kontroll-emlékeztető: a „nem szükséges” és az elhalasztás nyilvántartása (8. pont) */
@@ -386,4 +440,8 @@ export interface DB {
   suggestions: Suggestion[]
   recallSnoozes: RecallSnooze[]
   savedFilters: SavedFilter[]
+  /** törölt / lemondott / összevont jövőbeli időpontok (spec v2.2) */
+  deleted: DeletedAppt[]
+  drafts: Draft[]
+  informs: InformLog[]
 }

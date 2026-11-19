@@ -9,6 +9,10 @@ import { doctorName, recordForAppt, remindInfo, typeNames } from '~/utils/logic'
 import { teethStr } from '~/utils/teeth'
 import BookingModal from './BookingModal.vue'
 import MessageModal from './MessageModal.vue'
+import ApptRemoveModal from './ApptRemoveModal.vue'
+import ApptMergeModal from './ApptMergeModal.vue'
+import InformModal from './InformModal.vue'
+import { patientFuture, sugSourceText } from '~/utils/v22'
 
 const props = defineProps<{ id: string }>()
 const data = useDataStore()
@@ -24,13 +28,11 @@ const rk = computed(() => (a.value ? ap.risk(a.value) : null))
 const end = computed(() => (a.value ? toMin(a.value.start) + a.value.dur : 0))
 const maxBuf = computed(() => (a.value ? Math.max(0, db.value.settings.endHour * 60 - end.value) : 0))
 
-async function cancel() {
-  if (!a.value || !p.value) return
-  const lateC = ap.isLateCancel(a.value)
-  const ok = await ui.confirm(`Biztosan lemondod ${esc(p.value.name)} időpontját (${fmtDate(a.value.date)} ${a.value.start})? A sáv felszabadul és újra foglalható.${lateC ? '<div class="warn" style="margin-top:10px">24 órán belüli lemondás: a program megjegyzi, és ez növeli a páciens következő időpontjainak meg nem jelenési kockázatát.</div>' : ''}`, 'Lemondás', true)
-  if (!ok) return
-  ap.cancel(props.id); ui.close(); ui.toast('Időpont lemondva, a sáv felszabadult')
-}
+function cancel() { ui.open(ApptRemoveModal, { id: props.id, kind: 'cancel' }) }
+function remove() { ui.open(ApptRemoveModal, { id: props.id, kind: 'delete' }) }
+const futureApt = computed(() => !!a.value && a.value.date >= today() && !rec.value)
+const otherCount = computed(() => (a.value ? patientFuture(db.value, a.value.patientId, a.value.id).length : 0))
+const itemSug = (sid?: string) => { const g = sid ? db.value.suggestions.find(x => x.id === sid) : null; return g ? sugSourceText(db.value, g) : '' }
 async function start() {
   if (!a.value) return
   if (tx.active && tx.s?.appointmentId !== a.value.id) {
@@ -67,6 +69,17 @@ function setBuf(v: string) { ap.setBuffer(props.id, Number(v)); ui.toast(Number(
       <div>{{ typeNames(db, a.typeIds) }} <span class="muted">· {{ fmtFt(ap.price(a)) }}</span>
         <div v-if="a.planned?.teeth.length" class="small" style="margin-top:4px">Tervezett: <span v-for="t in a.planned.teeth" :key="t" class="tchip plan">{{ teethStr([t], a.planned.surfaces) }}</span></div>
       </div>
+      <template v-if="a.items?.length">
+        <div>Tételek</div>
+        <div>
+          <div v-for="(i, k) in a.items" :key="k" class="small" style="padding:2px 0">
+            <span class="tchip">{{ i.tooth ?? '–' }}</span> {{ db.types.find(t => t.id === i.typeId)?.name }}<span v-if="i.surfaces.length"> ({{ i.surfaces.join('') }})</span>
+            <span v-if="i.suggestionId" class="badge b-blue" style="margin-left:4px">javasolt</span>
+            <span v-if="i.suggestionId" class="muted"> – {{ itemSug(i.suggestionId) }}</span>
+          </div>
+          <div v-if="a.mergedFrom?.length" class="small muted">Összevont időpont ({{ a.mergedFrom.length }} másik időpontból).</div>
+        </div>
+      </template>
       <template v-if="a.note"><div>Megjegyzés</div><div>{{ a.note }}</div></template>
       <template v-if="p.internalNote"><div>Belső megjegyzés</div><div><InternalNote :text="p.internalNote" /></div></template>
       <template v-if="a.cancelSignal && !rec">
@@ -104,6 +117,10 @@ function setBuf(v: string) { ap.setBuffer(props.id, Number(v)); ui.toast(Number(
     <p v-if="rec"><span class="badge b-green">✓ A kezelés már rögzítve van</span></p>
     <template #foot>
       <button class="btn danger" :disabled="!!rec" :title="rec ? 'Rögzített kezelés után nem mondható le' : ''" @click="cancel">Lemondás</button>
+      <button v-if="futureApt" class="btn danger" @click="remove">Törlés</button>
+      <button v-if="futureApt && otherCount" class="btn" @click="ui.open(ApptMergeModal, { id: a!.id, mode: 'merge' })">Összevonás</button>
+      <button v-if="futureApt && otherCount && a.items?.length" class="btn" @click="ui.open(ApptMergeModal, { id: a!.id, mode: 'move' })">Tételek áthelyezése</button>
+      <button v-if="futureApt && a.items?.some(i => i.suggestionId)" class="btn" @click="ui.open(InformModal, { patientId: p!.id, apptIds: [a!.id] })">Tájékoztató</button>
       <div class="spacer" />
       <button v-if="ri && ri.ch.length && !rec" class="btn" @click="ui.open(MessageModal, { id: a.id })">Emlékeztető</button>
       <button class="btn" :disabled="!!rec" @click="edit">Módosítás</button>

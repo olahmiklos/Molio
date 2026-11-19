@@ -1,3 +1,13 @@
+import { execSync } from 'node:child_process'
+
+// a ténylegesen fordított kód azonosítója: commit, ág és a build ideje (a verziójelzés ebből készül, nem kézzel írt szöveg)
+const sh = (c: string) => { try { return execSync(c, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { return '' } }
+const BUILD = {
+  commit: process.env.WORKERS_CI_COMMIT_SHA || process.env.CF_PAGES_COMMIT_SHA || process.env.GITHUB_SHA || sh('git rev-parse HEAD'),
+  branch: process.env.WORKERS_CI_BRANCH || process.env.CF_PAGES_BRANCH || process.env.GITHUB_REF_NAME || sh('git rev-parse --abbrev-ref HEAD'),
+  builtAt: new Date().toISOString(),
+}
+
 // Molio – Nuxt 3 PWA
 // A nyilvános demó statikus oldalként készül (`npm run generate` → .output/public), szerver és adatbázis nélkül:
 // az adatok a böngésző tárolójában (IndexedDB) vannak. A végleges rendszer a Nitro szerverrel és PostgreSQL-lel fut.
@@ -7,6 +17,7 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   ssr: false,
   modules: ['@pinia/nuxt', '@vite-pwa/nuxt'],
+  vite: { define: { __MOLIO_BUILD__: JSON.stringify(BUILD) } },
   css: [
     '@fontsource/raleway/400.css',
     '@fontsource/raleway/500.css',

@@ -1,13 +1,13 @@
 // Adatok átvétele régebbi demóverzióból (a böngészőben tárolt adatok nem vesznek el a frissítéskor)
 import { addDays } from './dates'
 import type { DB } from './types'
-import { SMS_TPL, MAIL_TPL, MAIL_SUBJ, SUGGEST_TPL, defaultRecallTemplates } from './defaults'
+import { SMS_TPL, MAIL_TPL, MAIL_SUBJ, SUGGEST_TPL, INFORM_TPL, OLD_SUGGEST_TPL, defaultRecallTemplates } from './defaults'
 import { DEFAULT_SYNONYMS } from './codesets'
 import { builtinFilters } from './stockFilter'
 
 const BOUND = ['tomes', 'huzas', 'korona', 'gyoker', 'implant']
 
-/** a v4 (demó 2.0) adatait a v5 (specifikáció v2.1) szerkezetére hozza */
+/** a v4 (demó 2.0) és v5 (demó v2.1) adatait a v6 (specifikáció v2.2) szerkezetére hozza */
 export function migrate(db: DB, toVersion: number): DB {
   const st = db.settings as DB['settings']
   db.suggestions = db.suggestions || []
@@ -30,6 +30,15 @@ export function migrate(db: DB, toVersion: number): DB {
     if (!o.expected) o.expected = addDays(o.date, Math.max(0, ...o.lines.map(l => db.items.find(i => i.id === l.item)?.lead || 0)))
   })
   db.appointments.forEach(a => { delete (a as { confirmed?: boolean }).confirmed })
+  // spec v2.2: törölt időpontok, diktálási piszkozatok, tájékoztatók naplója; udvarias egyeztető-sablon; végző orvos a javaslatoknál
+  db.deleted = db.deleted || []
+  db.drafts = db.drafts || []
+  db.informs = db.informs || []
+  st.informTemplate = st.informTemplate || INFORM_TPL
+  if (!st.suggestTemplate || st.suggestTemplate === OLD_SUGGEST_TPL) st.suggestTemplate = SUGGEST_TPL
+  db.suggestions.forEach(g => { g.confirms = g.confirms || []; if (g.performerId === undefined) g.performerId = null })
+  // a v2.2 előtt felvett, kezelő orvos nélküli páciensek: az adatlapon jelzés látszik, a következő mentéskor a mező kötelező
+  db.patients.forEach(p => { if (p.doctorId === undefined) p.doctorId = null; p.doctorLog = p.doctorLog || [] })
   db.version = toVersion
   return db
 }

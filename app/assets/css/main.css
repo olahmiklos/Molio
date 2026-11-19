@@ -327,6 +327,12 @@ ul.sum { margin: 0; padding-left: 20px; line-height: 1.75 }
   .kpis { grid-template-columns: repeat(3, 1fr) }
   .grid3 { grid-template-columns: 1fr 1fr }
 }
+/* reszponzív: álló iPad és keskeny tablet – a hét menüpont ne lógjon ki */
+@media (max-width: 920px) {
+  .hdr { padding: 0 14px; gap: 8px }
+  .nav a { padding: 0 6px; letter-spacing: .03em; font-size: 11px }
+  .nav a::after { left: 6px; right: 6px }
+}
 /* reszponzív: telefon */
 @media (max-width: 760px) {
   body { font-size: 14.5px }

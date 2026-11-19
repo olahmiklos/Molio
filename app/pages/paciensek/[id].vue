@@ -25,6 +25,8 @@ import AppointmentModal from '~/components/modals/AppointmentModal.vue'
 import SuggestionModal from '~/components/modals/SuggestionModal.vue'
 import { isOverdue, sugFee, sugTotal, SUG_STATUS, URGENCY } from '~/utils/suggest'
 import { apptPrice } from '~/utils/logic'
+import InformModal from '~/components/modals/InformModal.vue'
+import { draftDaysLeft, liveDrafts, canRestore, restorableUntil, scheduleRatio, sugSourceText, sugsOfRecord } from '~/utils/v22'
 
 const route = useRoute()
 const data = useDataStore()
@@ -56,6 +58,10 @@ const byDay = computed(() => {
   return Object.keys(m).sort().reverse().map(d => ({ d, list: m[d]!.sort((a, b) => a.time.localeCompare(b.time)) }))
 })
 const upcoming = computed(() => patients.upcoming(id.value))
+const ratio = computed(() => scheduleRatio(db.value, id.value))
+const deleted = computed(() => ap.deletedOf(id.value))
+function restoreAppt(did: string) { const r = ap.restore(did); ui.toast(r.ok ? 'Időpont visszaállítva' : 'Nem állítható vissza: ' + r.why) }
+const dKind: Record<string, string> = { delete: 'törölve', cancel: 'lemondva', merged: 'összevonva' }
 const suggested = computed(() => (p.value ? patients.suggestedDentition(p.value.birth) : 'permanent'))
 const statuses = computed(() => (p.value ? p.value.statuses.slice().sort((a, b) => b.date.localeCompare(a.date)) : []))
 const sessHere = computed(() => tx.active && tx.s?.patientId === id.value)
@@ -115,6 +121,9 @@ const statusSummary = (teeth: Record<string, string[]>) => {
       <div class="card">
         <h2>Alapadatok</h2>
         <div class="kv" style="grid-template-columns:128px 1fr">
+          <div>Kezelő orvos</div>
+          <div><b v-if="p.doctorId">{{ doctorName(db, p.doctorId) }}</b><span v-else class="badge b-yellow">nincs megadva</span> <button class="btn sm" style="margin-left:6px" @click="ui.open(PatientFormModal, { id: p.id })">Módosítás</button>
+            <div v-for="l in (p.doctorLog || []).slice(-3)" :key="l.at" class="small muted">{{ fmtDate(l.at.slice(0, 10)) }}: {{ l.from ? doctorName(db, l.from) : 'nincs' }} → {{ doctorName(db, l.to) }} ({{ l.reason }})</div></div>
           <div>Születési dátum</div><div>{{ fmtBirth(p.birth) }} <span class="muted">({{ patients.age(p) }} éves)</span></div>
           <div>TAJ-szám</div><div>{{ p.taj || '–' }}</div>
           <div>Telefon</div><div>{{ p.phone }}</div>
@@ -173,6 +182,7 @@ const statusSummary = (teeth: Record<string, string[]>) => {
     <div class="card" id="kezelesek">
       <div class="row" style="margin-bottom:6px"><h2 style="margin:0">Kezelések</h2><div class="spacer" /><button class="btn pri sm" @click="ui.open(BookingModal, { patientId: p.id })"><AppIcon name="plus" :size="14" />Új időpont / kezelés előjegyzése</button></div>
       <h3>Következő kezelések</h3>
+      <div v-for="d in liveDrafts(db).filter(x => x.patientId === p!.id)" :key="d.id" class="hint row">Mentetlen diktálási piszkozat ({{ draftDaysLeft(d) }} napig marad meg) <div class="spacer" /><button class="btn sm" @click="d.appointmentId ? tx.startFromAppointment(d.appointmentId) : tx.startNew(p!.id); navigateTo('/kezeles')">Folytatás</button></div>
       <div v-for="a in upcoming" :key="a.id" class="rec" style="cursor:pointer" @click="ui.open(AppointmentModal, { id: a.id })">
         <div class="row">
           <b>{{ fmtDate(a.date) }} {{ a.start }}</b><span>{{ doctorName(db, a.doctorId) }}</span><span class="badge b-blue">előjegyzett</span>
@@ -181,6 +191,7 @@ const statusSummary = (teeth: Record<string, string[]>) => {
           <button class="btn sm" @click.stop="ui.open(BookingModal, { editId: a.id })">Szerkesztés</button>
         </div>
         <div class="small" style="margin-top:4px">{{ plannedLine(a) }}</div>
+        <div v-for="i in (a.items || []).filter(x => x.suggestionId)" :key="i.suggestionId" class="small muted">↳ {{ tname(i.typeId) }}{{ i.tooth ? ' · ' + i.tooth : '' }}: {{ db.suggestions.find(x => x.id === i.suggestionId) ? sugSourceText(db, db.suggestions.find(x => x.id === i.suggestionId)!) : '' }}</div>
       </div>
       <div v-for="g in pending" :key="g.id" class="rec" style="cursor:pointer;border-left:3px solid var(--orange)" @click="ui.open(SuggestionModal, { id: g.id })">
         <div class="row">
@@ -190,10 +201,20 @@ const statusSummary = (teeth: Record<string, string[]>) => {
           <div class="spacer" /><span class="muted small">becsült díj: {{ fmtFt(sugFee(db, g)) }}</span>
           <button class="btn sm go" @click.stop="ui.open(BookingModal, { suggestionIds: [g.id] })">Időpont</button>
         </div>
-        <div class="small muted" style="margin-top:2px">javasolt kezelés – még nincs időpont{{ g.note ? ' · ' + g.note : '' }}</div>
+        <div class="small muted" style="margin-top:2px">javasolt kezelés – még nincs időpont · {{ sugSourceText(db, g) }}{{ g.note ? ' · ' + g.note : '' }}</div>
       </div>
+      <div v-if="ratio.total > 1" class="small" style="margin:4px 0 8px"><span class="badge b-blue">{{ ratio.total }} javasolt tételből {{ ratio.scheduled }} ütemezve</span><span v-if="ratio.open.length" class="muted"> · {{ ratio.open.length }} még egyeztetendő</span></div>
+      <div class="row" style="margin:4px 0 8px"><button v-if="pending.length" class="btn sm" @click="ui.open(InformModal, { patientId: p.id })">Egyeztetést kérő üzenet</button><button v-if="upcoming.some(a => a.items?.some(i => i.suggestionId))" class="btn sm" @click="ui.open(InformModal, { patientId: p.id, apptIds: upcoming.filter(a => a.items?.some(i => i.suggestionId)).map(a => a.id) })">Tájékoztató az időpont(ok)ról</button></div>
       <p v-if="!upcoming.length && !pending.length" class="muted small" style="margin-top:0">Nincs előjegyzett vagy javasolt kezelés.</p>
       <div v-if="pending.length" class="small muted" style="margin:0 0 8px">Javasolt, még be nem ütemezett kezelések becsült díja összesen: <b>{{ fmtFt(sugTotal(db, pending)) }}</b></div>
+      <template v-if="deleted.length">
+        <h3 style="margin-top:16px">Törölt, lemondott és összevont időpontok</h3>
+        <div v-for="d in deleted" :key="d.id" class="rec" style="opacity:.9">
+          <div class="row"><b>{{ fmtDate(d.appt.date) }} {{ d.appt.start }}</b><span>{{ doctorName(db, d.appt.doctorId) }}</span><span class="badge b-gray">{{ dKind[d.kind] }}</span><span class="small muted">{{ fmtDate(d.at.slice(0, 10)) }}{{ d.by ? ' · ' + d.by : '' }}</span>
+            <div class="spacer" /><button v-if="canRestore(d)" class="btn sm" @click="restoreAppt(d.id)">Visszaállítás</button><span v-else class="small muted">lejárt a visszaállítási idő</span></div>
+          <div class="small muted">Ok: {{ d.reason }} · {{ d.fate }} · visszaállítható eddig: {{ fmtDate(restorableUntil(d.at)) }}</div>
+        </div>
+      </template>
       <h3 style="margin-top:16px">Korábbi kezelések</h3>
       <div class="row" style="margin-bottom:10px">
         <input v-model="fText" class="inp" style="max-width:200px" placeholder="Keresés a leírásban…">
@@ -220,6 +241,10 @@ const statusSummary = (teeth: Record<string, string[]>) => {
               <span v-for="i in r.items" :key="i.id" class="tchip" :style="i.state === 'postponed' ? 'opacity:.55;text-decoration:line-through' : ''" :title="i.state === 'postponed' ? 'elhalasztva' : ''">
                 {{ i.tooth ? i.tooth + ': ' : '' }}{{ tname(i.typeId) }}<template v-if="ORIGIN_B[i.origin]![0]"> · {{ ORIGIN_B[i.origin]![0] }}</template><template v-if="i.fee && i.state === 'done'"> · {{ fmtFt(i.fee) }}</template>
               </span>
+            </div>
+            <div v-if="sugsOfRecord(db, r.id).length" class="sumbox" style="margin-top:8px">
+              <div class="small" style="font-weight:700;color:var(--orange)">Ezen az alkalmon javasolt további kezelések</div>
+              <div v-for="x in sugsOfRecord(db, r.id)" :key="x.s.id" class="small" style="padding:2px 0">• <b>{{ tname(x.s.typeId) }}</b>{{ x.s.tooth ? ' · ' + x.s.tooth : '' }}{{ (x.s.confirms || []).some(c => c.recordId === r.id) ? ' (újra megerősítve)' : '' }} – <span class="muted">{{ x.where }}</span> <a style="cursor:pointer" @click="ui.open(SuggestionModal, { id: x.s.id })">megnyitás</a></div>
             </div>
             <div v-if="r.planned?.teeth.length" class="small muted" style="margin-top:4px">Tervezett: {{ teethStr(r.planned.teeth, r.planned.surfaces) }} · kezelt: {{ teethStr(r.teeth, r.surfaces) }}</div>
             <p>{{ r.text || '(nincs leírás)' }}</p>

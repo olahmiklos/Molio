@@ -107,7 +107,11 @@ async function resetDemo() {
       <div class="card">
         <h2>Demó adatai</h2>
         <p class="muted" style="margin-top:0">A mintaadatok {{ fmtDate(db.seededAt) }}-án készültek ehhez a böngészőhöz. Az adatok csak ezen az eszközön és ebben a böngészőben tárolódnak.</p>
-        <div class="row"><button class="btn danger" @click="resetDemo">Visszaállítás alaphelyzetbe</button><NuxtLink to="/nevjegy" class="btn">Névjegy és verzió</NuxtLink><NuxtLink to="/sugo" class="btn">Kézikönyv (PDF)</NuxtLink><span class="small muted">Molio 2.0 · {{ SPEC.title }}</span></div>
+        <div class="row"><button class="btn danger" @click="resetDemo">Visszaállítás alaphelyzetbe</button><NuxtLink to="/nevjegy" class="btn">Névjegy és verzió</NuxtLink><NuxtLink to="/sugo" class="btn">Kézikönyv (PDF)</NuxtLink><span class="small muted">Molio {{ APP_VERSION }} · {{ SPEC.title }}</span></div>
+      </div>
+      <div class="card">
+        <h2>Névjegy / Verzió</h2>
+        <VersionBlock />
       </div>
     </template>
 

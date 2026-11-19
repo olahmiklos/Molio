@@ -7,6 +7,7 @@ import { addDays, fmtDate, today } from '~/utils/dates'
 import { doctorName } from '~/utils/logic'
 import { fillSuggest, SUG_STATUS, URGENCY } from '~/utils/suggest'
 import BookingModal from './BookingModal.vue'
+import { sugSources, performerOf } from '~/utils/v22'
 
 const props = defineProps<{ id: string }>()
 const data = useDataStore()
@@ -41,6 +42,8 @@ async function drop() {
       <div>Kezelés</div><div><b>{{ t?.name }}</b>{{ g.tooth ? ` · ${g.tooth}-es fog` : '' }}{{ g.surfaces.length ? ` (${g.surfaces.join('')})` : '' }}</div>
       <div>Sürgősség</div><div><span class="badge" :class="URGENCY[g.urgency].cls">{{ URGENCY[g.urgency].label }}</span> <span v-if="g.due" class="muted">· javasolt határidő: {{ fmtDate(g.due) }}</span></div>
       <div>Állapot</div><div><span class="badge" :class="SUG_STATUS[g.status].cls">{{ SUG_STATUS[g.status].label }}</span><span v-if="g.remindAt" class="muted"> · újra jelez: {{ fmtDate(g.remindAt) }}</span><span v-if="g.droppedBy" class="muted"> · elvetette: {{ g.droppedBy }}</span></div>
+      <div>Forrás</div><div><div v-for="(x, i) in sugSources(db, g)" :key="i" class="small">{{ x.again ? 'Újra megerősítve' : 'Javasolva' }}: {{ fmtDate(x.date) }} · {{ x.label }}{{ x.doctor ? ' · ' + x.doctor : '' }}</div></div>
+      <div>Végző orvos</div><div>{{ doctorName(db, performerOf(db, g) || '') }}</div>
       <template v-if="g.note"><div>Megjegyzés</div><div>{{ g.note }}</div></template>
       <div>Elérhetőség</div><div>{{ p.phone || '–' }} · {{ p.email || 'nincs e-mail-cím' }}</div>
     </div>

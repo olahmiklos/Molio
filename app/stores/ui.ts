@@ -7,6 +7,7 @@ interface ConfirmState { msg: string; yes: string; no: string; danger?: boolean;
 
 export const useUiStore = defineStore('ui', () => {
   const toastMsg = ref('')
+  const toastAction = ref<{ label: string; fn: () => void } | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | null = null
   const modals = ref<ModalEntry[]>([])
   const confirmState = ref<ConfirmState | null>(null)
@@ -15,10 +16,10 @@ export const useUiStore = defineStore('ui', () => {
   let updateFn: (() => void) | null = null
   let seq = 0
 
-  function toast(msg: string) {
-    toastMsg.value = msg
+  function toast(msg: string, action?: { label: string; fn: () => void }) {
+    toastMsg.value = msg; toastAction.value = action || null
     if (toastTimer) clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => { toastMsg.value = '' }, 2800)
+    toastTimer = setTimeout(() => { toastMsg.value = ''; toastAction.value = null }, action ? 9000 : 2800)
   }
   function open(component: Component, props: Record<string, unknown> = {}) {
     modals.value.push({ id: ++seq, component: markRaw(component), props })
@@ -32,5 +33,5 @@ export const useUiStore = defineStore('ui', () => {
   function setUpdate(fn: () => void) { updateFn = fn; updateAvailable.value = true }
   function applyUpdate() { updateAvailable.value = false; updateFn?.() }
 
-  return { toastMsg, modals, confirmState, online, updateAvailable, toast, open, close, closeAll, confirm, answer, setUpdate, applyUpdate }
+  return { toastMsg, toastAction, modals, confirmState, online, updateAvailable, toast, open, close, closeAll, confirm, answer, setUpdate, applyUpdate }
 })

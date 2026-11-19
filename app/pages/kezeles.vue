@@ -31,6 +31,10 @@ const db = computed(() => data.db)
 const s = computed(() => tx.s)
 const p = computed(() => tx.patient)
 onMounted(() => voice.detect())
+// a diktálás végén azonnal feldolgozunk: az előnézet (fogak, tételek, anyagok) azonnal kész, csak a ⚠ sorokat kell megerősíteni (spec v2.2, 4. pont)
+watch(() => voice.recording, (v, old) => {
+  if (old && !v && s.value?.mode !== 'status') { tx.finishDictation(); if (tx.toReview) open.mats = true; ui.toast(tx.toReview ? `Az előnézet elkészült – ${tx.toReview} ⚠ sort meg kell erősíteni` : 'Az előnézet elkészült – ellenőrizd, majd mentsd') }
+})
 onBeforeUnmount(() => voice.stop())
 
 const SAMPLES = [
@@ -116,7 +120,7 @@ async function removeAtt(id: string) {
 
 async function cancel() {
   voice.stop()
-  if (tx.hasUnsaved && !(await ui.confirm('A kezelés még nincs mentve. Elveted?', 'Elvetés', true))) return
+  if (tx.hasUnsaved && !(await ui.confirm('A kezelés még nincs mentve. A diktált szöveg <b>piszkozatként 7 napig megmarad</b> (a készlet nem változik), a csatolmányok és az aláírt nyilatkozatok viszont elvesznek. Kilépsz?', 'Kilépés', true))) return
   const pid = s.value?.patientId
   tx.cancel()
   if (pid) navigateTo(`/paciensek/${pid}`)
@@ -179,6 +183,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
       A mesterséges intelligenciával készülő összefoglaló a későbbi verziókban lesz elérhető. Csak kitalált adatot diktálj: a böngésző a hangot a szolgáltatója szerverére küldheti.
       <span v-if="!voice.supported"><br><b>Ez a böngésző nem támogatja a diktálást</b> – gépeld be a szöveget (Chrome, Edge vagy Safari ajánlott).</span>
     </div>
+    <div v-if="tx.restored && s?.text" class="hint">Mentetlen diktálási piszkozat visszaállítva (7 napig őrizzük, a készletet nem érinti). Mentés után a piszkozat törlődik.</div>
     <div v-if="voice.recording || voice.message" class="tx-live">{{ voice.recording ? '🎙 ' : '' }}{{ voice.recording && live ? live : voice.message }}</div>
 
     <!-- fogtérkép középen -->
@@ -337,8 +342,13 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
                     <button v-if="r.manual" class="reset" :title="`Vissza a javasolt értékre (${r.auto})`" @click="tx.resetQty(r.id)">↺</button></td>
                   <td>
                     <span v-if="r.st === 'ok'" class="badge b-green">✓ egyezik</span>
-                    <span v-else-if="r.st === 'diff'" class="badge b-yellow" :title="`csomag: ${r.pk}`">⚠ ellenőrizendő</span>
-                    <span v-else-if="r.st === 'dict'" class="badge b-yellow" title="Csak a diktálásban hangzott el">⚠ ellenőrizendő</span>
+                    <template v-else-if="r.st === 'diff' || r.st === 'dict'">
+                      <span v-if="s.confirmedRows.includes(r.id) || s.recordId" class="badge b-green">✓ megerősítve</span>
+                      <template v-else>
+                        <span class="badge b-yellow" :title="r.st === 'diff' ? `csomag: ${r.pk}` : 'Csak a diktálásban hangzott el'">⚠ ellenőrizendő</span>
+                        <button class="btn sm" style="margin-left:4px" @click="tx.confirmRow(r.id)">Megerősítem</button>
+                      </template>
+                    </template>
                     <span v-else-if="r.st === 'pkg'" class="badge b-gray">csomag</span>
                     <span v-else class="badge b-blue">kézzel hozzáadva</span>
                   </td>
@@ -414,10 +424,11 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
       <div class="card row txbar">
         <button class="btn" @click="cancel">Mégse</button>
         <div class="spacer" />
-        <span class="small muted hide-m">Jóváhagyáskor a kartonba kerül, az anyagok levonódnak a raktárból.</span>
+        <span v-if="tx.toReview" class="badge b-yellow">⚠ {{ tx.toReview }} sor megerősítésre vár</span>
+        <span class="small muted hide-m">Mentéskor véglegesül: a kartonba kerül, és csak ekkor vonódik le az anyag a raktárból.</span>
         <span class="small muted" :title="'Anyagköltség átlagáron: ' + fmtPrice(tx.cost)">anyag: {{ fmtFt(tx.cost) }}</span>
         <span class="fee">{{ fmtFt(tx.fee) }}</span>
-        <button class="btn go" @click="approve"><AppIcon name="check" :size="16" />Jóváhagyás és mentés</button>
+        <button class="btn go" @click="approve"><AppIcon name="check" :size="16" />Mentés és véglegesítés</button>
       </div>
     </template>
   </div>

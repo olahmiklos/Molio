@@ -16,7 +16,7 @@ export const useDataStore = defineStore('data', () => {
   async function load() {
     const repo = useRepository()
     let loaded = await repo.load().catch(() => null)
-    if (loaded && loaded.version === 4) { loaded = migrate(loaded, DB_VERSION); await repo.save(loaded) }
+    if (loaded && (loaded.version === 4 || loaded.version === 5)) { loaded = migrate(loaded, DB_VERSION); await repo.save(loaded) }
     if (!loaded || loaded.version !== DB_VERSION) {
       if (loaded) await repo.reset()
       loaded = seed()

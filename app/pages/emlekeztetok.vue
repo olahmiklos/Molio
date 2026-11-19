@@ -14,6 +14,8 @@ import RecallSnoozeModal from '~/components/modals/RecallSnoozeModal.vue'
 import SuggestionModal from '~/components/modals/SuggestionModal.vue'
 import { useOfficeStore } from '~/stores/office'
 import { agoText } from '~/utils/office'
+import InformModal from '~/components/modals/InformModal.vue'
+import { buildTasks, TASK_KINDS, type TaskKind } from '~/utils/v22'
 import { isOverdue, needsFollowUp, sinceDays, SUG_STATUS, sugFee, URGENCY } from '~/utils/suggest'
 
 const data = useDataStore()
@@ -27,8 +29,8 @@ const high = computed(() => list.value.filter(x => x.rk.level === 'high'))
 const pat = (id: string) => db.value.patients.find(p => p.id === id)
 const office = useOfficeStore()
 const route = useRoute()
-type Tab = 'appt' | 'recall' | 'todo'
-const tabOf = (v: unknown): Tab => (v === 'recall' ? 'recall' : v === 'todo' ? 'todo' : 'appt')
+type Tab = 'tasks' | 'appt' | 'recall' | 'todo'
+const tabOf = (v: unknown): Tab => (v === 'recall' ? 'recall' : v === 'todo' ? 'todo' : v === 'appt' ? 'appt' : 'tasks')
 const tab = ref<Tab>(tabOf(route.query.tab))
 watch(() => route.query.tab, v => { tab.value = tabOf(v) })
 const showBooked = ref(false), showHidden = ref(false)
@@ -39,15 +41,62 @@ const tname = (id: string) => db.value.types.find(x => x.id === id)?.name || id
 const sugFilter = ref<'open' | 'all'>('open')
 const sugList = computed(() => (sugFilter.value === 'open' ? sugs.open : db.value.suggestions.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt))))
 const signals = computed(() => ap.signals)
+/* egységes Teendők (spec v2.2, 8. pont): raktári teendők nélkül */
+const fKind = ref<'' | TaskKind>(''), fDoc = ref(''), fUrg = ref('')
+const allTasks = computed(() => buildTasks(db.value))
+const tasks = computed(() => allTasks.value.filter(t => (!fKind.value || t.kind === fKind.value) && (!fDoc.value || t.doctorId === fDoc.value) && (!fUrg.value || t.urgency === fUrg.value)))
+const taskCount = computed(() => allTasks.value.length)
+function act(t: (typeof allTasks.value)[number]) {
+  if (t.refKind === 'suggestion') ui.open(BookingModal, { suggestionIds: [t.ref] })
+  else if (t.kind === 'inform') ui.open(InformModal, { patientId: t.patientId, apptIds: [t.ref] })
+  else if (t.refKind === 'recall') ui.open(BookingModal, { patientId: t.patientId, typeId: t.typeId })
+  else ui.open(AppointmentModal, { id: t.ref.split('|')[0]! })
+}
+function detail(t: (typeof allTasks.value)[number]) {
+  if (t.refKind === 'suggestion') ui.open(SuggestionModal, { id: t.ref })
+  else if (t.refKind === 'recall') ui.open(RecallMessageModal, { patientId: t.patientId, typeId: t.typeId })
+  else act(t)
+}
+function done(t: (typeof allTasks.value)[number]) { const [a, r] = t.ref.split('|'); if (r) ap.doneReply(a!, r) }
+function coord(pid: string) { ui.open(InformModal, { patientId: pid }) }
 </script>
 
 <template>
   <div>
-    <div class="pagehead"><h1>Emlékeztetők</h1><span v-if="tab === 'appt'" class="muted">{{ fmtDate(today()) }} – {{ fmtDate(addDays(today(), 7)) }}</span>
+    <div class="pagehead"><h1>Teendők</h1><span v-if="tab === 'appt'" class="muted">{{ fmtDate(today()) }} – {{ fmtDate(addDays(today(), 7)) }}</span>
       <div class="spacer" />
-      <div class="seg"><button :class="{ on: tab === 'appt' }" @click="tab = 'appt'">Időpontok és kockázat<template v-if="signals.length"> ({{ signals.length }} lemondás)</template></button><button :class="{ on: tab === 'recall' }" @click="tab = 'recall'">Kontroll-felülvizsgálatok ({{ openRecalls }})</button><button :class="{ on: tab === 'todo' }" @click="tab = 'todo'">Teendők: javasolt kezelések ({{ sugs.count }})</button></div>
+      <div class="seg"><button :class="{ on: tab === 'tasks' }" @click="tab = 'tasks'">Minden teendő ({{ taskCount }})</button><button :class="{ on: tab === 'appt' }" @click="tab = 'appt'">Emlékeztetők és kockázat<template v-if="signals.length"> ({{ signals.length }} lemondás)</template></button><button :class="{ on: tab === 'recall' }" @click="tab = 'recall'">Kontroll-felülvizsgálatok ({{ openRecalls }})</button><button :class="{ on: tab === 'todo' }" @click="tab = 'todo'">Javasolt kezelések ({{ sugs.count }})</button></div>
     </div>
-    <template v-if="tab === 'recall'">
+    <template v-if="tab === 'tasks'">
+      <div class="hint">Az asszisztens egységes teendőlistája: egyeztetendő időpontok (javasolt kezelések), kiküldendő tájékoztatók, esedékes kontrollok, lemondást jelzett időpontok és a páciensek üzenetei. A raktári teendők (megrendelés, szállítás) a Raktár menüben maradnak.</div>
+      <div class="row" style="margin-bottom:10px">
+        <select v-model="fKind" class="inp auto"><option value="">minden típus</option><option v-for="(v, k) in TASK_KINDS" :key="k" :value="k">{{ v.label }}</option></select>
+        <select v-model="fDoc" class="inp auto"><option value="">minden orvos</option><option v-for="d in db.doctors" :key="d.id" :value="d.id">{{ d.name }}</option></select>
+        <select v-model="fUrg" class="inp auto"><option value="">minden sürgősség</option><option value="urgent">sürgős</option><option value="recommended">javasolt</option><option value="later">ráér</option></select>
+        <span class="muted small">{{ tasks.length }} / {{ taskCount }} teendő</span>
+      </div>
+      <div class="card flush scroll-x">
+        <table class="t">
+          <thead><tr><th>Teendő</th><th>Páciens</th><th class="hide-m">Orvos</th><th class="hide-m">Határidő</th><th>Állapot</th><th /></tr></thead>
+          <tbody>
+            <tr v-for="t in tasks" :key="t.key" class="click" @click="detail(t)">
+              <td><span class="badge" :class="TASK_KINDS[t.kind].cls">{{ TASK_KINDS[t.kind].label }}</span><div style="margin-top:3px"><b>{{ t.title }}</b></div><div class="small muted">{{ t.detail }}</div></td>
+              <td><b>{{ pat(t.patientId)?.name }}</b><div class="small muted">{{ pat(t.patientId)?.phone }}</div></td>
+              <td class="hide-m small">{{ t.doctorId ? doctorName(db, t.doctorId) : '–' }}</td>
+              <td class="hide-m nowrap"><span :style="t.overdue ? 'color:var(--red);font-weight:700' : ''">{{ t.due ? fmtDate(t.due) : '–' }}</span><div class="small muted">{{ URGENCY[t.urgency].label }}</div></td>
+              <td class="small">{{ t.status }}</td>
+              <td class="nowrap" @click.stop>
+                <button v-if="t.kind === 'reply'" class="btn sm" @click="done(t)">Kész</button>
+                <button class="btn sm go" @click="act(t)">{{ t.kind === 'inform' ? 'Tájékoztató' : t.kind === 'cancel' || t.kind === 'reply' ? 'Megnyitás' : 'Időpont' }}</button>
+                <button v-if="t.kind === 'schedule' || t.kind === 'late'" class="btn sm" style="margin-left:4px" title="Kézi, udvarias üzenet: egyeztessen időpontot" @click="coord(t.patientId)">Üzenet</button>
+              </td>
+            </tr>
+            <tr v-if="!tasks.length"><td colspan="6" class="muted">Nincs teendő.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+    <template v-else-if="tab === 'recall'">
       <div class="hint">
         A program figyeli, kinél esedékes a rendszeres felülvizsgálat: <b>állapotfelmérés és fogkő-eltávolítás is 6 havonta</b> (alapértelmezett, később felülvizsgálandó; kezeléstípusonként a Beállítások / Kezelési csomagok lapon állítható).
         A lista két dátumot mutat: a <b>legutóbbi kezelés</b> és a <b>felülvizsgálat esedékessége</b> napját. Az üzenet sablonja a Beállításokban szerkeszthető. A küldés a demóban szimulált.

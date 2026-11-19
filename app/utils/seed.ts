@@ -2,7 +2,7 @@
 // A böngészős demó és a PostgreSQL seed (prisma/seed.ts) ugyanezt a generátort használja.
 import { addDays, dow, fromMin, toMin, today, uid } from './dates'
 import type { Appointment, DB, LotUse, Patient, StatusSnapshot, SurfaceMap, TreatmentRecord } from './types'
-import { defaultItems, defaultNotify, defaultRecallTemplates, defaultTypes, ROOM_ID, SITE_ID, SUGGEST_TPL } from './defaults'
+import { defaultItems, defaultNotify, defaultRecallTemplates, defaultTypes, ROOM_ID, SITE_ID, SUGGEST_TPL, INFORM_TPL } from './defaults'
 import { DEFAULT_SYNONYMS } from './codesets'
 import { builtinFilters } from './stockFilter'
 import { analyze, DEFAULT_STATUS_DICT } from './parser'
@@ -11,7 +11,7 @@ import { overlaps } from './calendar'
 import { allTeeth } from './teeth'
 import { batchNo, eesztRef, nextInvoiceNo, patientInfoDraft, STER_DEVICES, STER_PROGRAMS } from './office'
 
-export const DB_VERSION = 5
+export const DB_VERSION = 6
 
 function tajFrom(base8: string) {
   const d = base8.split('').map(Number)
@@ -68,13 +68,14 @@ export function seed(): DB {
     settings: {
       clinic: 'Cooldent Kft.', address: '1114 Budapest, Bartók Béla út 56.', phone: '+36 1 555 0123', startHour: 10, endHour: 20,
       notify: defaultNotify(), primaryAgeLimit: 12, patientBuffer: 30, statusDict: DEFAULT_STATUS_DICT.map(d => ({ ...d, kw: [...d.kw] })),
-      recallTemplates: defaultRecallTemplates(), suggestTemplate: SUGGEST_TPL, synonyms: DEFAULT_SYNONYMS.map(x => ({ ...x })),
+      recallTemplates: defaultRecallTemplates(), suggestTemplate: SUGGEST_TPL, informTemplate: INFORM_TPL, synonyms: DEFAULT_SYNONYMS.map(x => ({ ...x })),
     },
     doctors: [{ id: 'csempesz', name: 'Dr. Csempesz' }, { id: 'olah', name: 'Dr. Oláh' }],
     items: defaultItems(), types: defaultTypes(),
     patients: [], appointments: [], records: [], movements: [], attachments: [], events: [],
     lots: [], orders: [], sterCycles: [], recallInvites: [], consents: [], invoices: [],
     suggestions: [], recallSnoozes: [], savedFilters: builtinFilters(),
+    deleted: [], drafts: [], informs: [],
   }
   const yearsAgo = (y: number, md: string) => `${Number(t0.slice(0, 4)) - y}-${md}`
   const P: [string, string, string, string, string, string, string, string, boolean?][] = [
@@ -94,6 +95,8 @@ export function seed(): DB {
     healthWarning: p[6], internalNote: p[7], needsBuffer: !!p[8],
     dentition: i === 8 ? 'primary' : 'permanent', dentitionHistory: [], statuses: [],
     created: i >= 8 ? addDays(t0, -2100) : addDays(t0, -200), remind: { sms: true, email: false },
+    // a demó mintapáciensei kezelő orvossal érkeznek (spec v2.2, 5. pont)
+    doctorId: i % 2 === 0 ? 'csempesz' : 'olah', doctorLog: [],
   }))
   const pt = (i: number) => db.patients[i]!
   // fogazat és státusz
@@ -311,7 +314,17 @@ function seedV21(db: DB) {
   sg(3, -3, 26, 'tomes', ['O', 'D'], 'recommended', 'Állapotfelmérésen derült ki.', 14)
   sg(4, -6, 36, 'gyoker', [], 'urgent', 'Fájdalom, sürgős.', -1, 'olah')
   sg(2, -10, 47, 'tomes', ['O'], 'later', '', 60)
+  // egy állapotfelmérésen három javaslat (spec v2.2, 7. pont): két tömés és egy gyökérkezelés, különböző végző orvos is előfordulhat
+  sg(3, -3, 36, 'tomes', ['M', 'O'], 'recommended', 'Állapotfelmérésen derült ki.', 10)
+  sg(3, -3, 46, 'gyoker', [], 'urgent', 'Állapotfelmérésen derült ki, sürgős.', 5, 'olah')
   const s3 = db.suggestions[2]!; s3.status = 'postponed'; s3.remindAt = addDays(t0, -1); s3.contacts.push({ date: addDays(t0, -8), channel: 'telefon', note: 'Később kéri, jelenleg nem ér rá.' })
+  // forrás-vizit: a páciens legutóbbi kezelési alkalma; végző orvos: a páciens kezelő orvosa (a gyökérkezelés az Oláh doktoré)
+  db.suggestions.forEach(g => {
+    const rec = db.records.filter(r => r.patientId === g.patientId).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))[0]
+    if (rec) { g.recordId = rec.id; g.createdAt = rec.date; g.doctorId = rec.doctorId }
+    g.performerId = g.typeId === 'gyoker' ? 'olah' : db.patients.find(p => p.id === g.patientId)?.doctorId || g.doctorId
+    g.confirms = g.confirms || []
+  })
   const fut = db.appointments.filter(a => a.date > t0 && a.status !== 'noshow').sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
   const c = fut.find(a => a.patientId === pt(7).id) || fut[2]
   if (c) c.cancelSignal = { at: new Date().toISOString(), text: 'Nem tudok jönni' }

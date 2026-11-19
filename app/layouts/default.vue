@@ -5,7 +5,7 @@ import { useInventoryStore } from '~/stores/inventory'
 import { useTreatmentStore } from '~/stores/treatment'
 import { useSuggestionStore } from '~/stores/suggestion'
 import { useAppointmentStore } from '~/stores/appointment'
-import { BUILD_DATE_HU, SPEC, VERSION_LINE } from '~/utils/meta'
+import { BUILD_DATE_HU, SPEC, VERSION_BADGE, VERSION_LINE, buildInfo } from '~/utils/meta'
 
 const data = useDataStore()
 const ui = useUiStore()
@@ -20,7 +20,7 @@ const nav = [
   { to: '/', label: 'Naptár', short: 'Naptár', icon: 'calendar', match: (p: string) => p === '/' },
   { to: '/paciensek', label: 'Páciensek', short: 'Páciensek', icon: 'users', match: (p: string) => p.startsWith('/paciensek') },
   { to: '/kezeles', label: 'Kezelés', short: 'Kezelés', icon: 'tooth', match: (p: string) => p.startsWith('/kezeles') },
-  { to: '/emlekeztetok', label: 'Emlékeztetők', short: 'Emlékezt.', icon: 'bell', match: (p: string) => p.startsWith('/emlekeztetok') },
+  { to: '/emlekeztetok', label: 'Teendők', short: 'Teendők', icon: 'bell', match: (p: string) => p.startsWith('/emlekeztetok') },
   { to: '/raktar', label: 'Raktár', short: 'Raktár', icon: 'box', match: (p: string) => p.startsWith('/raktar') },
   { to: '/sterilizalas', label: 'Sterilizálás', short: 'Steril.', icon: 'shield', match: (p: string) => p.startsWith('/sterilizalas') },
   { to: '/beallitasok', label: 'Beállítások', short: 'Beáll.', icon: 'gear', match: (p: string) => p.startsWith('/beallitasok') || p.startsWith('/nevjegy') || p.startsWith('/sugo') },
@@ -105,7 +105,7 @@ onMounted(() => {
         <div class="ph">{{ st.phone }}</div>
       </div>
       <div class="small" style="opacity:.75;max-width:420px;line-height:1.5">
-        <b>{{ VERSION_LINE }}</b> · build: {{ BUILD_DATE_HU }} – bemutató program kitalált adatokkal.<br>
+        <b>{{ VERSION_LINE }}</b> · build: {{ BUILD_DATE_HU }} <span v-if="buildInfo().env !== 'DEMÓ'" class="badge b-yellow">{{ buildInfo().env }}</span> – bemutató program kitalált adatokkal. <span style="opacity:.8">{{ VERSION_BADGE }}</span><br>
         Specifikáció: {{ SPEC.title }}. <NuxtLink to="/nevjegy">Névjegy</NuxtLink> · <NuxtLink to="/sugo">Felhasználói kézikönyv (PDF)</NuxtLink>
       </div>
       <div class="dots"><i style="background:#ec2f7b" /><i style="background:#f5891f" /><i style="background:#13b0a5" /><i style="background:#3fa463" /><i style="background:#8b4fe0" /><i style="background:#2a8ccc" /></div>
@@ -132,6 +132,6 @@ onMounted(() => {
         </div>
       </div>
     </div>
-    <div v-if="ui.toastMsg" class="toast">{{ ui.toastMsg }}</div>
+    <div v-if="ui.toastMsg" class="toast">{{ ui.toastMsg }}<button v-if="ui.toastAction" class="btn sm" style="margin-left:12px" @click="const act = ui.toastAction; ui.toastMsg = ''; ui.toastAction = null; act.fn()">{{ ui.toastAction.label }}</button></div>
   </div>
 </template>
