@@ -41,6 +41,18 @@ A naptár a két orvos időpontjait mutatja napi, heti és havi nézetben. Minde
 2. Válaszd ki a pácienst, az orvost és a kezelést. Tömésnél megadhatod a tervezett fogat és felszínt is – ez a kezelés indításakor automatikusan átkerül.
 3. Állítsd be az emlékeztetőt (SMS, e-mail, időzítés). A páciens választását a program megjegyzi.
 
+## Figyelmeztetések a páciens meglévő időpontjairól (v2.2)
+
+Páciens kiválasztása után a program megmutatja, ha neki már van jövőbeli időpontja: a következő időpontot, az **ugyanazon a napon** lévőt (átfedésnél piros jelzéssel) és a **7 napon belülieket**. Ugyanazon napra újabb időpont foglalása előtt megerősítést kér. Új páciensnél a **kezelő orvos megadása kötelező**; meglévő páciensnél, ha más orvost választasz, csak tájékoztatást kapsz.
+
+## Javasolt kezelések foglalása (v2.2)
+
+Ha a páciensnek vannak javasolt, még be nem ütemezett kezelései, a foglalásnál jelölőnégyzettel kiválaszthatod, melyeket végeznék el ezen az időponton; ami nincs bejelölve, egyeztetendő marad a Teendők között. Minden tételnél látszik, melyik alkalmon javasolták, és ki végzi. Egy időponthoz egy orvos tartozik. Ha a javasolt határidő az időpont előtt lejár, a program figyelmeztet.
+
+## Időpont törlése, összevonása (v2.2)
+
+A jövőbeli időpont **Lemondás** vagy **Törlés** gombja kötelező okot kér, és megkérdezi, mi legyen a javasolt kezelésekkel (visszakerülnek a Teendők közé, vagy átkerülnek a páciens másik időpontjára). A törölt időpont a kartonon **30 napig visszaállítható**, a törlés után pedig a **Visszavonás** gombbal azonnal is. Az **Összevonás** a páciens két időpontját vonja egybe (eltérő orvosnál te döntöd el, ki marad), a **Tételek áthelyezése** egyes tételeket visz át a másik időpontra.
+
 ## Ráhagyási idő
 
 A bonyolultabb kezelések (például foghúzás, gyökérkezelés, implantátum) után, illetve a „ráhagyást igényel” jelölésű pácienseknél a naptár tartaléksávot hagy. Ez lila csíkozással látszik, és oda nem foglalható másik időpont. Ha egy páciens az elmúlt évben többször késett, a kartonja felajánlja a jelölés bekapcsolását.
@@ -104,6 +116,10 @@ A teljes szöveg kezelési jegyzetként megmarad, és bármikor javítható. Ha 
 - **Sterilizált műszercsomag:** válaszd ki, melyik sterilizálási tétel csomagjával dolgozol. A program alapból a legfrissebb, megfelelt ciklust ajánlja. Ha aznap még nem volt Bowie–Dick-teszt, figyelmeztet.
 - **Beleegyező nyilatkozat:** a **Nyilatkozat aláíratása tableten** gombbal (lásd külön fejezet).
 
+## Azonnali előnézet és mentés (v2.2)
+
+A diktálás leállításakor a program azonnal feldolgozza a szöveget, és előnézetet ad a fogakról, tételekről és anyagokról. Csak a **⚠ ellenőrizendő** anyagsorokat kell megerősíteni (**Megerősítem**, vagy a mennyiség átírása); amíg ilyen sor van, a kezelés nem menthető. A **Mentés és véglegesítés** gombbal kerül a kartonba, és csak ekkor vonódik le a készlet. Ha kilépsz mentés nélkül, a diktált szöveg **7 napig piszkozatként megmarad**, a készlet nem változik.
+
 ## Jóváhagyás
 
 A **Jóváhagyás és mentés** gomb után:
@@ -140,7 +156,9 @@ Ha a jóváhagyott szöveget módosítod, újra jóvá kell hagyni. A demóban a
 
 > A demó nyilatkozatai mintaszövegek. Éles használat előtt szakmai és jogi ellenőrzésük szükséges.
 
-# Emlékeztetők és kontroll-meghívók
+# Teendők, emlékeztetők és kontroll-meghívók
+
+A **Teendők** menü (korábban Emlékeztetők) egységes listába gyűjti az asszisztens feladatait: egyeztetendő időpontok (javasolt kezelések), kiküldendő tájékoztatók, esedékes kontrollok, lemondást jelzett időpontok és a páciensek üzenetei; típus, orvos és sürgősség szerint szűrhető. A raktári teendők a Raktár menüben maradnak. **Tájékoztató** csak rögzített időponthoz küldhető (időpont, javasolt kezelések közérthető felsorolása, forrás-kezelés); időpont nélkül kézzel indítható udvarias, **időpont-egyeztetést kérő** üzenet. A küldés a demóban szimulált.
 
 ## Időpontok és kockázat
 
@@ -224,6 +242,8 @@ A páciens kartonján a nap fejlécében lévő **Számla előkészítése** gom
 
 # Beállítások
 
+A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („Demó v2.2 – a specifikáció v2.2 alapján készült”), a build idejét és a kódazonosítót, itt van a **Frissítés keresése** gomb és a másolható verzióadat (hibabejelentéshez). A teszt- és a demókörnyezetet jelölés különbözteti meg.
+
 - **Klinika:** név, cím, telefon, rendelési idő, a tejfogazat javaslatának korhatára, a ráhagyás hossza, a mintaadatok visszaállítása.
 - **Értesítések:** az alapértelmezett emlékeztető és az SMS-, e-mail-sablonok előnézettel.
 - **Kezelési csomagok:** kezeléstípusonként az alapidő, a ráhagyás, a díj (tömésnél felszínszám szerint), a kontroll-meghívó időköze, a beleegyező nyilatkozat sablonja, a szín, a diktálási kulcsszavak és az anyagcsomag (alkalmanként, foganként vagy felszínenként). Itt bővíthető a fogazati státusz felismerési szótára is.
@@ -243,6 +263,16 @@ A páciens kartonján a nap fejlécében lévő **Számla előkészítése** gom
 **Hogyan kezdhetem elölről a kipróbálást?** Beállítások → Klinika → Visszaállítás alaphelyzetbe.
 
 # Verziótörténet
+
+## 2.2
+
+- Figyelmeztetés a páciens meglévő, azonos napi és 7 napon belüli időpontjaira foglaláskor.
+- Időpont törlése okkal, 30 napos visszaállítással; tételek áthelyezése és időpontok összevonása.
+- Verziójelzés és „Frissítés keresése”, teszt/demó jelölés, másolható verzióadatok.
+- Diktálás azonnali előnézete, csak a ⚠ sorok megerősítésével; mentéskor véglegesül a készletlevonás; 7 napos piszkozat.
+- Kötelező kezelő orvos új páciensnél, váltáskor az időpontok átvitele.
+- Javasolt kezelés forrásvizitje; több javasolt tétel egy időponton, részleges ütemezéssel és határidő-figyelmeztetéssel.
+- Tájékoztató üzenet rögzített időponthoz, udvarias egyeztetést kérő üzenet, egységes Teendők menü.
 
 ## 2.0
 
