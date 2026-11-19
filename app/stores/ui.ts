@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { markRaw, type Component } from 'vue'
 
 interface ModalEntry { id: number; component: Component; props: Record<string, unknown>; wide?: boolean }
-interface ConfirmState { msg: string; yes: string; danger?: boolean; resolve: (v: boolean) => void }
+interface ConfirmState { msg: string; yes: string; no: string; danger?: boolean; resolve: (v: boolean) => void }
 
 export const useUiStore = defineStore('ui', () => {
   const toastMsg = ref('')
@@ -25,8 +25,8 @@ export const useUiStore = defineStore('ui', () => {
   }
   function close() { modals.value.pop() }
   function closeAll() { modals.value = [] }
-  function confirm(msg: string, yes = 'Igen', danger = false) {
-    return new Promise<boolean>(resolve => { confirmState.value = { msg, yes, danger, resolve } })
+  function confirm(msg: string, yes = 'Igen', danger = false, no = 'Mégse') {
+    return new Promise<boolean>(resolve => { confirmState.value = { msg, yes, no, danger, resolve } })
   }
   function answer(v: boolean) { const c = confirmState.value; confirmState.value = null; c?.resolve(v) }
   function setUpdate(fn: () => void) { updateFn = fn; updateAvailable.value = true }

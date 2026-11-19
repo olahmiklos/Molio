@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { seed } from '../app/utils/seed'
-import { consumeStock, lotSearch, orderSuggestions, previewLots, receiveStock, weightedAvg } from '../app/utils/stock'
+import { applyReceiptToOrder, consumeStock, lotSearch, orderSuggestions, previewLots, receiveStock, weightedAvg } from '../app/utils/stock'
+import { orderInfo } from '../app/utils/logic'
 import { recallRows, patientInfoDraft, consentFor, layTooth } from '../app/utils/office'
 
 describe('gördülő súlyozott átlagár', () => {
@@ -44,15 +45,35 @@ describe('gyártási tételek', () => {
   })
 })
 
-describe('rendelési javaslat', () => {
-  it('a már megrendelt mennyiséggel csökken', () => {
+describe('rendelési javaslat és megrendelések követése (spec v2.1, 11. pont)', () => {
+  it('a leadott megrendelés után az anyag kikerül a javaslatból és a figyelmeztetésekből', () => {
     const db = seed()
-    const s = orderSuggestions(db).find(x => x.item.id === 'ideig')
-    expect(s?.onOrder).toBe(40)
-    const before = s ? s.qty : 0
+    expect(orderInfo(db, db.items.find(i => i.id === 'ideig')!).state).toBe('ordered')
+    expect(orderSuggestions(db).find(x => x.item.id === 'ideig')).toBeUndefined()
     db.orders = []
-    const s2 = orderSuggestions(db).find(x => x.item.id === 'ideig')!
-    expect(s2.qty).toBe(before + 40)
+    const s2 = orderSuggestions(db).find(x => x.item.id === 'ideig')
+    expect(s2).toBeTruthy()
+  })
+  it('ha a megrendelt mennyiség nem fedezi a várható fogyást, újra jelez', () => {
+    const db = seed()
+    const tu = db.items.find(i => i.id === 'tu')!
+    tu.safety = { mode: 'qty', value: 10 }
+    db.orders.push({ id: 'x1', date: '2099-01-01', supplier: '', lines: [{ item: 'tu', qty: 1, received: 0 }], orderedBy: 'teszt', status: 'ordered', note: '', expected: '2099-01-09' })
+    const s = orderSuggestions(db).find(x => x.item.id === 'tu')
+    expect(s?.reason).toContain('nem fedezi')
+  })
+  it('késő szállítás újra jelez', () => {
+    const db = seed()
+    db.orders[0]!.expected = '2020-01-01'
+    expect(orderInfo(db, db.items.find(i => i.id === 'ideig')!).state).toBe('late')
+  })
+  it('teljes beérkezésnél automatikusan lezár, részlegesnél nyitva marad', () => {
+    const db = seed()
+    const o = db.orders[0]!
+    applyReceiptToOrder(db, o.id, 'ideig', 10)
+    expect(o.status).toBe('partial')
+    applyReceiptToOrder(db, o.id, 'ideig', 30)
+    expect(o.status).toBe('received')
   })
 })
 

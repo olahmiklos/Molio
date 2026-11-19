@@ -35,7 +35,17 @@ export interface Settings {
   primaryAgeLimit: number
   patientBuffer: number
   statusDict: StatusDef[]
+  /** kontroll-emlékeztető üzenetsablonok (2.1.2; admin/beállítások menüben szerkeszthető) */
+  recallTemplates: MsgTemplate[]
+  /** „javasolt kezelés – egyeztessen időpontot” üzenetsablon */
+  suggestTemplate: string
+  /** szinonimatábla a diktálás értelmezéséhez (5. pont) */
+  synonyms?: Synonym[]
 }
+
+export interface Synonym { id: string; from: string; to: string; group: string }
+
+export interface MsgTemplate { id: string; name: string; text: string }
 
 export interface Doctor { id: string; name: string }
 
@@ -58,6 +68,8 @@ export interface Item {
   implant?: boolean
   /** a legutóbbi bevételezés egységára (a `price` a gördülő súlyozott átlagár) */
   lastPrice?: number
+  /** biztonsági tartalék: mennyiség (db) vagy hét fogyása; ha nincs megadva, 0 */
+  safety?: { mode: 'qty' | 'weeks'; value: number } | null
 }
 
 /** gyártási tétel (LOT) a raktárban: a kiadás lejárat szerint történik (ami előbb lejár, az fogy előbb) */
@@ -85,6 +97,8 @@ export interface TreatmentType {
   recallMonths?: number
   /** beleegyező nyilatkozat sablonja (CONSENT_TPL kulcsa) */
   consent?: string
+  /** fogra (nem a teljes szájra) végzett művelet: a kezelési tétel foghoz kötött */
+  toothBound?: boolean
 }
 
 export interface RemindChoice { sms: boolean; email: boolean; timing?: NotifySettings['timing'] }
@@ -127,6 +141,27 @@ export interface Appointment {
   status?: 'noshow'
   late?: number
   planned?: Planned | null
+  /** a foglalt kezelési tételek (fog, művelet, felszín) – a kezelés indításakor „előjegyzett” tételek */
+  items?: PlannedItem[]
+  /** a páciens „NEM” választ küldött az emlékeztetőre: lemondást jelzett, az asszisztens zárja le */
+  cancelSignal?: { at: string; text: string }
+}
+
+export interface PlannedItem { tooth: number | null; typeId: string; surfaces: Surface[] }
+
+/** kezelési tétel egy vizitben (2. pont): egy fog + egy művelet */
+export type ItemOrigin = 'planned' | 'added' | 'manual'
+export interface VisitItem {
+  id: string
+  tooth: number | null
+  typeId: string
+  surfaces: Surface[]
+  /** előjegyzett / kezelés közben hozzáadott */
+  origin: ItemOrigin
+  /** elvégzett vagy elhalasztott (a javasolt tétel külön, Suggestion) */
+  state: 'done' | 'postponed'
+  fee: number
+  note?: string
 }
 
 export interface MaterialUse { item: string; qty: number; lots?: LotUse[]; cost?: number }
@@ -152,6 +187,10 @@ export interface TreatmentRecord {
   eeszt?: { status: 'pending' | 'sent'; sentAt?: string; ref?: string }
   /** közérthető tájékoztató a páciensnek – csak orvosi jóváhagyás után küldhető */
   patientInfo?: PatientInfo
+  /** a vizit kezelési tételei (foganként, műveletenként); a régi rekordoknál hiányzik */
+  items?: VisitItem[]
+  /** utólagos módosítások naplója (ki, mikor) */
+  editLog?: { at: string; by: string; note: string }[]
 }
 
 export interface PatientInfo {
@@ -169,6 +208,9 @@ export interface StatusSnapshot {
   dentition: Dentition
   teeth: Record<string, string[]>
   note: string
+  /** a pillanatképben változott fogak: korábbi → új állapot (a fog előzményeihez) */
+  changes?: Record<string, { from: string[]; to: string[] }>
+  source?: 'dictation' | 'status' | 'manual' | 'treatment'
 }
 
 export interface Movement {
@@ -232,10 +274,60 @@ export interface Order {
   id: string
   date: string
   supplier: string
-  lines: { item: string; qty: number }[]
+  lines: { item: string; qty: number; received?: number }[]
   orderedBy: string
-  status: 'ordered' | 'received'
+  /** leadva → részben beérkezett → beérkezett (automatikus) / lezárt (kézi) / visszavont */
+  status: 'ordered' | 'partial' | 'received' | 'closed' | 'cancelled'
   note: string
+  /** rendelésszám / megjegyzés */
+  ref?: string
+  /** várható beérkezés (megrendelés dátuma + beszerzési idő) */
+  expected?: string
+  receivedDate?: string
+  closedNote?: string
+  cancelReason?: string
+}
+
+/** javasolt, de még be nem ütemezett kezelés (12. pont) */
+export type SuggestionStatus = 'new' | 'contacted' | 'booked' | 'done' | 'postponed' | 'declined' | 'dropped'
+export interface Suggestion {
+  id: string
+  patientId: string
+  recordId: string | null
+  doctorId: string
+  createdAt: string
+  tooth: number | null
+  typeId: string
+  surfaces: Surface[]
+  note: string
+  urgency: 'urgent' | 'recommended' | 'later'
+  /** mikorra javasolt (határidő) */
+  due: string | null
+  status: SuggestionStatus
+  /** elhalasztva: ekkor jelez újra */
+  remindAt?: string | null
+  contacts: { date: string; channel: string; note: string }[]
+  appointmentId?: string | null
+  callback?: boolean
+  droppedBy?: string
+  closedNote?: string
+}
+
+/** kontroll-emlékeztető: a „nem szükséges” és az elhalasztás nyilvántartása (8. pont) */
+export interface RecallSnooze { id: string; patientId: string; typeId: string; last: string; until: string | null; reason: string; date: string }
+
+export interface SavedFilter { id: string; name: string; filters: StockFilters; builtin?: boolean }
+export interface StockFilters {
+  q: string
+  stockMin: number | null; stockMax: number | null
+  priceMin: number | null; priceMax: number | null
+  useMin: number | null; useMax: number | null
+  leadMin: number | null; leadMax: number | null
+  byFrom: string; byTo: string
+  quick: '' | 'overdue' | 'today' | 'week' | 'month'
+  belowReserve: boolean
+  notOrdered: boolean
+  siteId: string
 }
 
 export interface RecallInvite { id: string; patientId: string; typeId: string; date: string; channels: string[] }
@@ -291,4 +383,7 @@ export interface DB {
   recallInvites: RecallInvite[]
   consents: Consent[]
   invoices: Invoice[]
+  suggestions: Suggestion[]
+  recallSnoozes: RecallSnooze[]
+  savedFilters: SavedFilter[]
 }

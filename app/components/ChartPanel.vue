@@ -14,9 +14,11 @@ const props = defineProps<{
   current?: SurfaceMap
   draft?: Record<string, string[]> | null
   flags?: Record<string, string>
+  marks?: Record<number, 'planned' | 'added' | 'postponed'>
+  hl?: number | null
   clickable?: boolean
 }>()
-const emit = defineEmits<{ tooth: [n: number] }>()
+const emit = defineEmits<{ tooth: [n: number]; hover: [n: number | null] }>()
 const chart = useDentalChartStore()
 const patients = usePatientStore()
 const files = useFiles()
@@ -29,6 +31,7 @@ const showXray = computed(() => v.value.mode === 'xray' && !!xrayId.value)
 const legend = [
   ['#2a8ccc', 'tömés (kezelt felszín)'], ['#8b4fe0', 'gyökérkezelés'], ['#f5b31f', 'korona / hídtag'], ['#13b0a5', 'implantátum'],
   ['#f5891f', 'szuvas'], ['#c08457', 'gyökérmaradvány'], ['#ec2f7b', 'aktuális kezelés'],
+  ['#2a8ccc', 'jelölő: előjegyzett tétel'], ['#f5b31f', 'jelölő: kezelés közben hozzáadva'],
 ]
 </script>
 
@@ -47,7 +50,7 @@ const legend = [
       <slot name="tools" />
     </div>
     <div v-if="showXray" class="xchart"><img class="xray-img" :src="files.url(xrayId)" alt="Röntgenkép"></div>
-    <ToothChart v-else :dentition="p.dentition" :model="model" :selected="selected" :focus="focus" :current="current" :draft="draft" :flags="flags" :clickable="clickable" @tooth="emit('tooth', $event)" />
+    <ToothChart v-else :dentition="p.dentition" :model="model" :selected="selected" :focus="focus" :current="current" :draft="draft" :flags="flags" :marks="marks" :hl="hl" :clickable="clickable" @tooth="emit('tooth', $event)" @hover="emit('hover', $event)" />
     <div class="xlegend">
       <span v-for="[c, l] in legend" :key="l"><i :style="`background:${c}`" />{{ l }}</span>
       <span><i style="border:1.5px dashed #9fb1c4;background:transparent" />{{ STATUS_STYLE.hianyzik!.label }}</span>

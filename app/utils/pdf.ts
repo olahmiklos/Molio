@@ -73,6 +73,14 @@ export function pdfPages(db: DB, pid: string, date: string, imgs: Record<string,
     text(`Orvos: ${doctorName(db, r.doctorId)}`, `22px ${F}`, '#334155', 32, 16)
     text(`Kezelés: ${typeNames(db, r.typeIds) || '–'}`, `22px ${F}`, '#334155', 32, 16)
     text(`Érintett fogak és felszínek: ${r.teeth.length ? teethStr(r.teeth, r.surfaces) : '–'}`, `22px ${F}`, '#334155', 32, 16)
+    if (r.items?.length) {
+      y += 6; text('Kezelési tételek (fog × művelet)', `bold 21px ${F}`, '#0f172a', 32, 16)
+      r.items.forEach(i => {
+        const tn = db.types.find(t => t.id === i.typeId)?.name || i.typeId
+        const tag = i.state === 'postponed' ? ' – elhalasztva' : i.origin === 'added' ? ' – kezelés közben hozzáadva' : ''
+        text(`• ${i.tooth ? teethStr([i.tooth], { [i.tooth]: i.surfaces }) + ': ' : ''}${tn}${i.fee && i.state === 'done' ? ' – ' + i.fee.toLocaleString('hu-HU') + ' Ft' : ''}${tag}`, `21px ${F}`, '#334155', 30, 16)
+      })
+    }
     if (r.planned?.teeth.length) text(`Tervezett: ${teethStr(r.planned.teeth, r.planned.surfaces)}${r.extended ? ' – kezelés közben bővítve' : ''}`, `21px ${F}`, '#64748b', 30, 16)
     y += 8; text('Leírás', `bold 21px ${F}`, '#0f172a', 32, 16)
     text(r.text || '–', `22px ${F}`, '#0f172a', 32, 16)

@@ -50,13 +50,20 @@ export const usePatientStore = defineStore('patient', () => {
   const latestStatus = (pid: string, dentition?: Dentition): StatusSnapshot | undefined => {
     const p = byId(pid); if (!p) return
     const d = dentition || p.dentition
-    return p.statuses.filter(s => s.dentition === d).sort((a, b) => b.date.localeCompare(a.date))[0]
+    // azonos napon több pillanatkép is lehet: a legutóbb rögzített számít
+    return p.statuses.filter(s => s.dentition === d).reduce<StatusSnapshot | undefined>((best, s) => (!best || s.date >= best.date ? s : best), undefined)
   }
-  function addStatus(pid: string, teeth: Record<string, string[]>, note = '') {
+  function addStatus(pid: string, teeth: Record<string, string[]>, note = '', source: StatusSnapshot['source'] = 'status') {
     const p = byId(pid); if (!p) return
     const prev = latestStatus(pid)
     const merged: Record<string, string[]> = { ...(prev?.teeth || {}), ...teeth }
-    p.statuses.push({ id: uid(), date: today(), dentition: p.dentition, teeth: merged, note })
+    const changes: NonNullable<StatusSnapshot['changes']> = {}
+    Object.entries(teeth).forEach(([n, to]) => {
+      const from = prev?.teeth[n] || []
+      if ([...from].sort().join() !== [...to].sort().join()) changes[n] = { from: [...from], to: [...to] }
+    })
+    p.statuses.push({ id: uid(), date: today(), dentition: p.dentition, teeth: merged, note, changes, source })
+    return changes
   }
 
   /** gyors betegösszefoglaló (2.2.2) – szabályalapú kivonat a karton adataiból; a belső megjegyzés nem szerepel benne */

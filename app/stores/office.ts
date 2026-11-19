@@ -18,6 +18,13 @@ export const useOfficeStore = defineStore('office', () => {
   function invite(patientId: string, typeId: string, channels: string[]) {
     db.value.recallInvites.push({ id: uid(), patientId, typeId, date: today(), channels })
   }
+  /** „nem szükséges” (until = null) vagy „később” – a sor eltűnik, amíg az utolsó kezelés nem változik / a határidő le nem jár */
+  function snoozeRecall(patientId: string, typeId: string, last: string, until: string | null, reason: string) {
+    db.value.recallSnoozes.push({ id: uid(), patientId, typeId, last, until, reason, date: today() })
+  }
+  function undoSnooze(patientId: string, typeId: string, last: string) {
+    db.value.recallSnoozes = db.value.recallSnoozes.filter(z => !(z.patientId === patientId && z.typeId === typeId && z.last === last))
+  }
 
   /* ---------- páciens-tájékoztató: vázlat → orvosi jóváhagyás → küldés ---------- */
   function ensureInfo(rid: string) {
@@ -81,7 +88,7 @@ export const useOfficeStore = defineStore('office', () => {
   const recordsOfBatch = (batch: string) => db.value.records.filter(r => r.sterBatch === batch)
 
   return {
-    recalls, invite,
+    recalls, invite, snoozeRecall, undoSnooze,
     ensureInfo, regenerateInfo, setInfoText, approveInfo, sendInfo, pendingInfos,
     sendEeszt, eesztPending,
     invoiceFor, issueInvoice,

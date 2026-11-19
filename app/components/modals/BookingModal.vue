@@ -4,27 +4,30 @@ import { useDataStore } from '~/stores/data'
 import { useAppointmentStore } from '~/stores/appointment'
 import { usePatientStore } from '~/stores/patient'
 import { useUiStore } from '~/stores/ui'
-import { DAYS, dow, fmtBirth, fmtDate, fmtLong, fmtShort, fromMin, norm, toMin, today } from '~/utils/dates'
-import type { Planned, RemindChoice } from '~/utils/types'
-import { bufferFor, feeFor, riskFor, suggestBufferFlag } from '~/utils/logic'
+import { DAYS, dow, esc, fmtBirth, fmtDate, fmtLong, fmtShort, fromMin, norm, toMin, today } from '~/utils/dates'
+import type { Planned, PlannedItem, RemindChoice } from '~/utils/types'
+import { useSuggestionStore } from '~/stores/suggestion'
+import { bufferFor, feeFor, itemFee, riskFor, suggestBufferFlag } from '~/utils/logic'
 import { freeSlots, overlaps, slotsList } from '~/utils/calendar'
 import { analyze } from '~/utils/parser'
-import { teethStr } from '~/utils/teeth'
+import { allTeeth, teethStr } from '~/utils/teeth'
 import type { PatientDraft } from '../PatientFields.vue'
 
-const props = defineProps<{ editId?: string; patientId?: string; date?: string; start?: string; doctorId?: string; typeId?: string }>()
+const props = defineProps<{ editId?: string; patientId?: string; date?: string; start?: string; doctorId?: string; typeId?: string; suggestionIds?: string[] }>()
 const data = useDataStore()
 const ap = useAppointmentStore()
 const patients = usePatientStore()
 const ui = useUiStore()
+const sugs = useSuggestionStore()
 const db = computed(() => data.db)
 const ed = props.editId ? ap.byId(props.editId) : undefined
 
-const patientId = ref<string | null>(ed?.patientId || props.patientId || null)
+const patientId = ref<string | null>(ed?.patientId || props.patientId || sugs.byId(props.suggestionIds?.[0] || '')?.patientId || null)
 const q = ref('')
 const newP = ref(false)
 const draft = ref<PatientDraft>({ name: '', birth: '', taj: '', phone: '', email: '', address: '', healthWarning: '', internalNote: '', needsBuffer: false, dentition: 'permanent' })
-const types = ref<string[]>(ed ? [...ed.typeIds] : props.typeId ? [props.typeId] : [])
+const sgList = (props.suggestionIds || []).map(i => sugs.byId(i)).filter((x): x is NonNullable<typeof x> => !!x)
+const types = ref<string[]>(ed ? [...ed.typeIds] : sgList.length ? [...new Set(sgList.map(g => g.typeId))] : props.typeId ? [props.typeId] : [])
 const doctorId = ref(ed?.doctorId || props.doctorId || db.value.doctors[0]!.id)
 const date = ref(ed?.date || props.date || ap.defaultBookingDate())
 const start = ref(ed?.start || props.start || fromMin(db.value.settings.startHour * 60))
@@ -33,7 +36,9 @@ const durManual = ref(!!ed)
 const buffer = ref(ed?.buffer || 0)
 const bufManual = ref(!!ed)
 const note = ref(ed?.note || '')
-const plannedText = ref(ed?.planned ? teethStr(ed.planned.teeth, ed.planned.surfaces) : '')
+const plannedText = ref(ed?.planned ? teethStr(ed.planned.teeth, ed.planned.surfaces) : sgList.filter(g => g.tooth).map(g => g.tooth + ' ' + g.surfaces.join('')).join(', '))
+const warnedKey = ref('')
+const msgEl = ref<HTMLElement | null>(null)
 const rem = ref<RemindChoice>(ed ? { ...ed.remind } : { sms: db.value.settings.notify.sms, email: db.value.settings.notify.email, timing: db.value.settings.notify.timing })
 const msg = ref('')
 
@@ -63,7 +68,25 @@ const planned = computed<Planned | null>(() => {
   const r = analyze(plannedText.value, db.value)
   return r.teeth.length ? { teeth: r.teeth, surfaces: r.surfaces } : null
 })
-const fee = computed(() => feeFor(db.value, types.value, planned.value?.teeth || [], planned.value?.surfaces))
+/** előjegyzett tételek (2. pont): fog × művelet; a tervezett fogakból és a kezelésekből áll össze, kézzel szerkeszthető */
+const items = ref<PlannedItem[]>(ed?.items ? ed.items.map(i => ({ ...i, surfaces: [...i.surfaces] })) : [])
+const itemsManual = ref(!!ed?.items?.length)
+const isBound = (id: string) => !!db.value.types.find(t => t.id === id)?.toothBound
+function autoItems() {
+  if (itemsManual.value) return
+  const out: PlannedItem[] = []
+  types.value.forEach(tid => {
+    if (isBound(tid) && planned.value?.teeth.length) planned.value.teeth.forEach(n => out.push({ tooth: n, typeId: tid, surfaces: [...(planned.value!.surfaces[n] || [])] }))
+    else out.push({ tooth: null, typeId: tid, surfaces: [] })
+  })
+  items.value = out
+}
+watch([types, planned], autoItems, { deep: true, immediate: true })
+const newItemTooth = ref<number | ''>(''), newItemType = ref('')
+function addItem() { if (!newItemType.value) return; itemsManual.value = true; items.value.push({ tooth: isBound(newItemType.value) && newItemTooth.value ? Number(newItemTooth.value) : null, typeId: newItemType.value, surfaces: [] }); if (!types.value.includes(newItemType.value)) types.value.push(newItemType.value); newItemType.value = '' }
+function rmItem(i: number) { itemsManual.value = true; items.value.splice(i, 1) }
+const tName = (id: string) => db.value.types.find(t => t.id === id)?.name || id
+const fee = computed(() => (items.value.length ? items.value.reduce((s, i) => s + itemFee(db.value, i.typeId, i.surfaces), 0) : feeFor(db.value, types.value, planned.value?.teeth || [], planned.value?.surfaces)))
 const slots = computed(() => slotsList(db.value))
 const free = computed(() => freeSlots(db.value, doctorId.value, dur.value, buffer.value, 10, props.editId))
 const ov = computed(() => (date.value && start.value ? overlaps(db.value, doctorId.value, date.value, start.value, dur.value, buffer.value, props.editId) : undefined))
@@ -73,10 +96,11 @@ const risk = computed(() => (patientId.value && date.value ? riskFor(db.value, {
 const suggestFlag = computed(() => (patient.value ? suggestBufferFlag(db.value, patient.value) : false))
 const ovName = computed(() => (ov.value ? db.value.patients.find(p => p.id === ov.value!.patientId)?.name : ''))
 
+watch(msg, v => { if (v) nextTick(() => msgEl.value?.scrollIntoView({ block: 'center', behavior: 'smooth' })) })
 function pick(d: string, m: string) { date.value = d; start.value = m }
 function flagPatient() { if (patient.value) { patients.update(patient.value.id, { needsBuffer: true }); bufManual.value = false; buffer.value = bufferFor(db.value, types.value, patient.value); ui.toast('A páciens kartonján bekapcsolva: ráhagyást igényel') } }
 
-function save() {
+async function save() {
   msg.value = ''
   let pid = patientId.value
   if (!pid) {
@@ -97,10 +121,20 @@ function save() {
   if (dow(date.value) > 5) { msg.value = 'Hétvégére nem lehet foglalni.'; return }
   if (lateEnd.value) { msg.value = 'A kezelés a rendelési idő után érne véget.'; return }
   if (bufOver.value) { msg.value = 'A ráhagyás a rendelési idő után érne véget – rövidítsd vagy hagyd el.'; return }
-  if (ov.value) { msg.value = 'Az időpont (a ráhagyással együtt) ütközik egy másik foglalással.'; return }
-  const body = { patientId: pid, doctorId: doctorId.value, date: date.value, start: start.value, dur: dur.value, buffer: buffer.value, typeIds: [...types.value], note: note.value.trim(), remind: { ...rem.value }, planned: planned.value }
+  const conflict = ov.value
+  if (conflict) {
+    // ütközésnél nem tiltjuk a mentést: egyszer figyelmeztetünk, aztán a döntés az asszisztensé (6. pont)
+    const key = [doctorId.value, date.value, start.value, dur.value, buffer.value].join('|')
+    const ok = await ui.confirm(`Ez az időpont ütközik: <b>${esc(ovName.value || '')}</b> ${conflict.start}–${fromMin(toMin(conflict.start) + conflict.dur)}. Mentsd így, vagy menj vissza és válassz másik időpontot.`, 'Mentés ütközéssel', false, 'Vissza')
+    warnedKey.value = key
+    if (!ok) return
+  }
+  const body = { patientId: pid, doctorId: doctorId.value, date: date.value, start: start.value, dur: dur.value, buffer: buffer.value, typeIds: [...types.value], note: note.value.trim(), remind: { ...rem.value }, planned: planned.value, items: items.value.map(i => ({ ...i, surfaces: [...i.surfaces] })) }
+  let savedId = ed?.id || ''
   if (ed) { const old = `${fmtDate(ed.date)} ${ed.start}`; ap.update(ed.id, body); ui.toast(`Időpont módosítva: ${old} → ${fmtDate(date.value)} ${start.value}`) }
-  else { ap.create(body); ui.toast(`Időpont lefoglalva: ${fmtDate(date.value)} ${start.value}`) }
+  else { const na = ap.create(body); savedId = na.id; ui.toast(`Időpont lefoglalva: ${fmtDate(date.value)} ${start.value}`) }
+  if (sgList.length && savedId) sugs.book(sgList.map(g => g.id), savedId)
+  if (conflict) ui.toast(`Mentve – ütközik: ${ovName.value} ${conflict.start}`)
   ap.calDate = date.value
   ui.close()
 }
@@ -157,6 +191,19 @@ function save() {
         <span v-else-if="plannedText.trim()" class="small" style="color:var(--orange)">nem ismerhető fel fogként</span>
       </div>
     </div>
+    <div v-if="items.length || types.length" class="field">
+      <label class="f">Előjegyzett tételek <span class="n">(fog × művelet; kezeléskor ezek jelennek meg kék jelöléssel)</span></label>
+      <div v-for="(i, k) in items" :key="k" class="row" style="padding:4px 0">
+        <span class="tchip" style="min-width:48px;text-align:center">{{ i.tooth ?? '–' }}</span><span>{{ tName(i.typeId) }}</span>
+        <span v-if="i.surfaces.length" class="small muted">({{ i.surfaces.join('') }})</span>
+        <button class="btn sm" @click="rmItem(k)">×</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <select v-model="newItemTooth" class="inp auto"><option value="">fog…</option><option v-for="n in allTeeth('permanent')" :key="n" :value="n">{{ n }}</option></select>
+        <select v-model="newItemType" class="inp auto"><option value="">művelet…</option><option v-for="t in db.types" :key="t.id" :value="t.id">{{ t.name }}</option></select>
+        <button class="btn sm" @click="addItem">+ Tétel</button>
+      </div>
+    </div>
     <div class="grid3">
       <div class="field"><label class="f">Orvos</label><select v-model="doctorId" class="inp"><option v-for="dc in db.doctors" :key="dc.id" :value="dc.id">{{ dc.name }}</option></select></div>
       <div class="field"><label class="f">Dátum</label><input v-model="date" class="inp" type="date"></div>
@@ -186,11 +233,11 @@ function save() {
       <b>Meg nem jelenés becsült kockázata:</b> <RiskBadge :risk="risk" /> <span class="small">{{ risk.factors.join(' · ') || 'nincs kockázati tényező' }}</span>
       <template v-if="risk.level === 'high'"><br>Javaslat: kérj SMS-t és e-mailt is, és jelezd, hogy egy nappal előtte telefonon is megerősítjük.</template>
     </div>
-    <div v-if="ov" class="warn">Ez az időpont ütközik: {{ ovName }} {{ ov.start }}–{{ fromMin(toMin(ov.start) + ov.dur) }}{{ ov.buffer ? ` (+${ov.buffer}' ráhagyás)` : '' }}.</div>
+    <div v-if="ov" class="warn">Ez az időpont ütközik: {{ ovName }} {{ ov.start }}–{{ fromMin(toMin(ov.start) + ov.dur) }}{{ ov.buffer ? ` (+${ov.buffer}' ráhagyás)` : '' }}. Mentheted ütközéssel is, a naptárban jelölve marad.</div>
     <div v-else-if="lateEnd" class="warn">A kezelés a rendelési idő ({{ db.settings.endHour }}:00) után érne véget.</div>
     <div v-else-if="bufOver" class="warn">A ráhagyás a rendelési idő után érne véget.</div>
     <div v-else-if="date && dow(date) > 5" class="warn">Hétvégén nincs rendelés.</div>
-    <div v-if="msg" class="err">{{ msg }}</div>
+    <div v-if="msg" ref="msgEl" class="err">{{ msg }}</div>
     <template #foot>
       <span class="muted small">Díj: <b>{{ fee.toLocaleString('hu-HU') }} Ft</b></span>
       <div class="spacer" />

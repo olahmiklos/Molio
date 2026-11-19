@@ -9,6 +9,9 @@ import { defaultNotify } from '~/utils/defaults'
 import { fillTpl, futureAppts } from '~/utils/logic'
 import { APP_VERSION, SPEC } from '~/utils/meta'
 import { CONSENT_TPL } from '~/utils/office'
+import { codeTables, DEFAULT_SYNONYMS, setSynonyms } from '~/utils/codesets'
+import { defaultRecallTemplates, SUGGEST_TPL } from '~/utils/defaults'
+import { uid } from '~/utils/dates'
 import ItemModal from '~/components/modals/ItemModal.vue'
 import NewItemModal from '~/components/modals/NewItemModal.vue'
 
@@ -18,7 +21,7 @@ const ui = useUiStore()
 const tx = useTreatmentStore()
 const db = computed(() => data.db)
 const st = computed(() => db.value.settings)
-const tab = ref<'clinic' | 'notify' | 'pkg' | 'master' | 'integr'>('clinic')
+const tab = ref<'clinic' | 'notify' | 'pkg' | 'codes' | 'master' | 'integr'>('clinic')
 const pkgSel = ref(db.value.types[0]?.id || '')
 const t = computed(() => db.value.types.find(x => x.id === pkgSel.value))
 const hours = Array.from({ length: 17 }, (_, i) => i + 6)
@@ -27,6 +30,16 @@ const saved = () => ui.toast('Mentve')
 const sample = computed(() => futureAppts(db.value)[0] || { patientId: db.value.patients[0]!.id, doctorId: db.value.doctors[0]!.id, date: today(), start: '10:00', typeIds: [db.value.types[0]!.id] })
 function resetTpl() { const d = defaultNotify(); Object.assign(st.value.notify, { smsTpl: d.smsTpl, mailSubj: d.mailSubj, mailTpl: d.mailTpl }); saved() }
 
+const syn = computed(() => { if (!st.value.synonyms) st.value.synonyms = JSON.parse(JSON.stringify(DEFAULT_SYNONYMS)); return st.value.synonyms! })
+const codes = computed(() => codeTables(db.value))
+const codeOpen = ref<string>('')
+function synSaved() { setSynonyms(st.value.synonyms); saved() }
+function addSyn() { syn.value.push({ id: uid(), from: '', to: '', group: 'egyéb' }); }
+function delSyn(id: string) { st.value.synonyms = syn.value.filter(x => x.id !== id); synSaved() }
+function resetSyn() { st.value.synonyms = JSON.parse(JSON.stringify(DEFAULT_SYNONYMS)); synSaved() }
+function addRecallTpl() { st.value.recallTemplates.push({ id: uid(), name: 'Új sablon', text: 'Kedves {név}! ' }); saved() }
+function delRecallTpl(id: string) { if (st.value.recallTemplates.length <= 1) { ui.toast('Legalább egy sablon kell.'); return } st.value.recallTemplates = st.value.recallTemplates.filter(x => x.id !== id); saved() }
+function resetRecallTpl() { st.value.recallTemplates = defaultRecallTemplates(); st.value.suggestTemplate = SUGGEST_TPL; saved() }
 function setKw(obj: { kw: string[] }, v: string) { obj.kw = parseKw(v); saved() }
 function addType() { const n = inv.addType(); pkgSel.value = n.id; ui.toast('Új kezeléstípus létrehozva – add meg a nevét és a csomagját') }
 async function delType(id: string) {
@@ -63,6 +76,7 @@ async function resetDemo() {
         <button :class="{ on: tab === 'clinic' }" @click="tab = 'clinic'">Klinika</button>
         <button :class="{ on: tab === 'notify' }" @click="tab = 'notify'">Értesítések</button>
         <button :class="{ on: tab === 'pkg' }" @click="tab = 'pkg'">Kezelési csomagok</button>
+        <button :class="{ on: tab === 'codes' }" @click="tab = 'codes'">Kódtáblák és szinonimák</button>
         <button :class="{ on: tab === 'master' }" @click="tab = 'master'">Anyag-törzsadatok</button>
         <button :class="{ on: tab === 'integr' }" @click="tab = 'integr'">Kapcsolatok</button>
       </div>
@@ -93,7 +107,7 @@ async function resetDemo() {
       <div class="card">
         <h2>Demó adatai</h2>
         <p class="muted" style="margin-top:0">A mintaadatok {{ fmtDate(db.seededAt) }}-án készültek ehhez a böngészőhöz. Az adatok csak ezen az eszközön és ebben a böngészőben tárolódnak.</p>
-        <div class="row"><button class="btn danger" @click="resetDemo">Visszaállítás alaphelyzetbe</button><NuxtLink to="/nevjegy" class="btn">Névjegy és verzió</NuxtLink><NuxtLink to="/sugo" class="btn">Kézikönyv (PDF)</NuxtLink><span class="small muted">Molio {{ APP_VERSION }} · {{ SPEC.title }}</span></div>
+        <div class="row"><button class="btn danger" @click="resetDemo">Visszaállítás alaphelyzetbe</button><NuxtLink to="/nevjegy" class="btn">Névjegy és verzió</NuxtLink><NuxtLink to="/sugo" class="btn">Kézikönyv (PDF)</NuxtLink><span class="small muted">Molio 2.0 · {{ SPEC.title }}</span></div>
       </div>
     </template>
 
@@ -124,6 +138,46 @@ async function resetDemo() {
           </div>
         </div>
         <div class="row"><div class="spacer" /><button class="btn sm" @click="resetTpl">Sablonok visszaállítása</button></div>
+      </div>
+      <div class="card">
+        <div class="row"><h2 style="margin:0">Kontroll-felülvizsgálati üzenetsablonok</h2><div class="spacer" /><button class="btn sm" @click="addRecallTpl">+ Új sablon</button><button class="btn sm" @click="resetRecallTpl">Alapértékek</button></div>
+        <div class="hint">Mezők: {név} {mennyi ideje} {kezelés dátuma} {kezelés} {felülvizsgálat} {telefon} {klinika}. A küldéskor sablon választható és a szöveg javítható. (Admin beállítás.)</div>
+        <div v-for="tp in st.recallTemplates" :key="tp.id" class="field" style="border-top:1px solid #eef1f3;padding-top:8px">
+          <div class="row"><input v-model.lazy="tp.name" class="inp" style="max-width:300px;font-weight:700" @change="saved"><div class="spacer" /><button class="btn sm danger" @click="delRecallTpl(tp.id)">Törlés</button></div>
+          <textarea v-model.lazy="tp.text" class="inp" rows="3" style="margin-top:6px" @change="saved" />
+        </div>
+        <div class="field"><label class="f">Javasolt kezelés – időpontegyeztetés üzenete <span class="n">({név} {kezelés} {fogak} {telefon} {klinika})</span></label><textarea v-model.lazy="st.suggestTemplate" class="inp" rows="3" @change="saved" /></div>
+      </div>
+    </template>
+
+    <!-- kódtáblák és szinonimák (5. pont) -->
+    <template v-else-if="tab === 'codes'">
+      <div class="hint">
+        A fogak, felszínek, állapotok, kezelések és anyagok <b>kódtáblákban</b> vannak (éles rendszerben PostgreSQL-táblák: verziószám {{ codes.version }}, {{ codes.date }}), a diktálás értelmezése ezekre és a <b>szinonimatáblára</b> épül.
+        A szinonimatábla megmondja, hogy a köznyelvi vagy rövidített kifejezés (pl. „nyolcas”, „bölcsességfog”) melyik szabványos kifejezésre képződjön le. A demó a szabványos kódtáblákat tartalmazza; országos kódrendszer (pl. OENO) később csatolható.
+      </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:10px"><h2 style="margin:0">Szinonimatábla</h2><span class="badge b-gray">{{ syn.length }} bejegyzés</span><div class="spacer" /><button class="btn sm" @click="addSyn">+ Új szinonima</button><button class="btn sm" @click="resetSyn">Alapértékek</button></div>
+        <div class="scroll-x">
+          <table class="t">
+            <thead><tr><th>Ha ezt mondja…</th><th>…ezt értjük alatta</th><th>Csoport</th><th /></tr></thead>
+            <tbody>
+              <tr v-for="s in syn" :key="s.id">
+                <td><input v-model.lazy="s.from" class="inp" @change="synSaved"></td><td><input v-model.lazy="s.to" class="inp" @change="synSaved"></td>
+                <td><input v-model.lazy="s.group" class="inp" style="width:120px" @change="synSaved"></td><td><button class="btn sm danger" @click="delSyn(s.id)">×</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Kódtáblák (csak megtekintés)</h2>
+        <div v-for="[k, label, n] in ([['teeth', 'Fogak (FDI)', codes.teeth.length], ['surfaces', 'Felszínek', codes.surfaces.length], ['states', 'Fogállapotok', codes.states.length], ['procedures', 'Kezelések', codes.procedures.length], ['materials', 'Anyagok', codes.materials.length]] as [string, string, number][])" :key="k" style="border-top:1px solid #eef1f3;padding:6px 0">
+          <div class="row" style="cursor:pointer" @click="codeOpen = codeOpen === k ? '' : k"><b>{{ label }}</b><span class="badge b-gray">{{ n }} tétel</span><div class="spacer" /><span>{{ codeOpen === k ? '▴' : '▾' }}</span></div>
+          <div v-if="codeOpen === k" class="small" style="margin-top:6px;line-height:1.7;columns:2 260px">
+            <div v-for="(r, i) in (codes as unknown as Record<string, Record<string, unknown>[]>)[k]" :key="i"><code>{{ r.code }}</code> {{ r.name ?? r.hu }}<template v-if="r.unit"> ({{ r.unit }})</template></div>
+          </div>
+        </div>
       </div>
     </template>
 

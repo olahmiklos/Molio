@@ -6,7 +6,7 @@ import { useUiStore } from '~/stores/ui'
 import { addDays, DAYS, dow, fmtDate, fmtLong, fmtShort, fromMin, fromYmd, MONTHS, nowMin, toMin, today } from '~/utils/dates'
 import type { Appointment } from '~/utils/types'
 import { docIdx, typeNames } from '~/utils/logic'
-import { apptsOn, slotsList, usedSlots } from '~/utils/calendar'
+import { apptsOn, conflictsOf, slotsList, usedSlots } from '~/utils/calendar'
 import AppointmentModal from './modals/AppointmentModal.vue'
 import BookingModal from './modals/BookingModal.vue'
 
@@ -31,7 +31,9 @@ const isPast = (dd: string, m: number) => dd < t0.value || (dd === t0.value && m
 const weekDays = computed(() => { const ws = addDays(d.value, 1 - dow(d.value)); return [0, 1, 2, 3, 4].map(i => addDays(ws, i)) })
 
 const pname = (a: Appointment) => db.value.patients.find(p => p.id === a.patientId)?.name || '?'
-const mark = (a: Appointment) => (ap.isDone(a) ? '✓ ' : a.status === 'noshow' ? '✗ ' : a.date >= t0.value && ap.risk(a).level === 'high' ? '⚠ ' : '')
+const isConf = (a: Appointment) => !ap.isDone(a) && conflictsOf(db.value, a).length > 0
+const confTitle = (a: Appointment) => 'ÜTKÖZIK: ' + conflictsOf(db.value, a).map(b => `${pname(b)} ${b.start}`).join(', ')
+const mark = (a: Appointment) => (ap.isDone(a) ? '✓ ' : isConf(a) ? '‼ ' : a.cancelSignal ? '✉ ' : a.status === 'noshow' ? '✗ ' : a.date >= t0.value && ap.risk(a).level === 'high' ? '⚠ ' : '')
 const clip = (a: Appointment) => {
   // a rendelési időn túllógó rész nem jelenik meg
   const end = db.value.settings.endHour * 60, s = toMin(a.start)
@@ -74,8 +76,8 @@ function book(o: Record<string, string>) { ui.open(BookingModal, o) }
         </template>
         <template v-for="(dc, ci) in docs" :key="'a' + dc.id">
           <template v-for="a in apptsOn(db, d, dc.id)" :key="a.id">
-            <div class="ap" :class="[`d${docIdx(db, a.doctorId)}`, { done: ap.isDone(a), noshow: a.status === 'noshow', 'has-buf': clip(a).buf > 0 }]"
-              :style="`grid-row:${slotRow(a.start) + 1} / span ${clip(a).dur / 30};grid-column:${ci + 2}`" :title="`${pname(a)} – ${typeNames(db, a.typeIds)}`" @click.stop="openAppt(a)">
+            <div class="ap" :class="[`d${docIdx(db, a.doctorId)}`, { done: ap.isDone(a), noshow: a.status === 'noshow', 'has-buf': clip(a).buf > 0, short: clip(a).dur <= 30, conflict: isConf(a), signal: !!a.cancelSignal }]"
+              :style="`grid-row:${slotRow(a.start) + 1} / span ${clip(a).dur / 30};grid-column:${ci + 2}`" :title="`${pname(a)} – ${typeNames(db, a.typeIds)}${isConf(a) ? ' · ' + confTitle(a) : ''}${a.cancelSignal ? ' · lemondást jelzett' : ''}`" @click.stop="openAppt(a)">
               <b>{{ mark(a) }}{{ pname(a) }}</b>
               <span>{{ a.start }}–{{ fromMin(toMin(a.start) + a.dur) }} · {{ typeNames(db, a.typeIds) }}</span>
             </div>
@@ -88,7 +90,7 @@ function book(o: Record<string, string>) { ui.open(BookingModal, o) }
         Kattints egy üres sávra időpont foglalásához, vagy egy időpontra a részletekhez és a kezelés indításához.
         Rendelési idő: {{ db.settings.startHour }}:00–{{ db.settings.endHour }}:00, 30 perces sávok.<br>
         <span v-for="(dc, i) in docs" :key="dc.id" class="leg" :style="`background:${i === 0 ? 'var(--green)' : 'var(--pink)'};margin-right:6px`">{{ dc.name }}</span>
-        <span class="leg buf-leg">Ráhagyás</span> = tartalék az elhúzódó kezelésre, foglaltnak számít.
+        <span class="leg buf-leg">Ráhagyás</span> = tartalék az elhúzódó kezelésre, foglaltnak számít. <span class="leg conf-leg">‼ Ütközés</span> = piros keretes időpont, a másikkal átfedésben van · ✉ = a páciens lemondást jelzett.
       </p>
     </template>
 
@@ -113,8 +115,8 @@ function book(o: Record<string, string>) { ui.open(BookingModal, o) }
           <template v-for="(dd, i) in weekDays" :key="'wa' + dd">
             <template v-for="(dc, j) in docs" :key="'wa' + dd + dc.id">
               <template v-for="a in apptsOn(db, dd, dc.id)" :key="a.id">
-                <div class="ap" :class="[`d${docIdx(db, a.doctorId)}`, { done: ap.isDone(a), noshow: a.status === 'noshow', 'has-buf': clip(a).buf > 0 }]"
-                  :style="`grid-row:${slotRow(a.start) + 2} / span ${clip(a).dur / 30};grid-column:${2 + i * docs.length + j}`" :title="`${pname(a)} – ${typeNames(db, a.typeIds)}`" @click.stop="openAppt(a)">
+                <div class="ap" :class="[`d${docIdx(db, a.doctorId)}`, { done: ap.isDone(a), noshow: a.status === 'noshow', 'has-buf': clip(a).buf > 0, conflict: isConf(a), signal: !!a.cancelSignal }]"
+                  :style="`grid-row:${slotRow(a.start) + 2} / span ${clip(a).dur / 30};grid-column:${2 + i * docs.length + j}`" :title="`${pname(a)} – ${typeNames(db, a.typeIds)}${isConf(a) ? ' · ' + confTitle(a) : ''}`" @click.stop="openAppt(a)">
                   <b>{{ mark(a) }}{{ pname(a) }}</b><span v-if="a.dur > 30">{{ typeNames(db, a.typeIds) }}</span>
                 </div>
                 <div v-if="clip(a).buf > 0" class="buf" :style="`grid-row:${slotRow(a.start) + 2 + clip(a).dur / 30} / span ${clip(a).buf / 30};grid-column:${2 + i * docs.length + j}`" @click.stop="openAppt(a)">Ráhagyás</div>

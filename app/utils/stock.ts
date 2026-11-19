@@ -2,7 +2,7 @@
 // kiadása, lejáró tételek, rendelési javaslat, LOT-keresés (visszahívás). Tiszta függvények, a store-ok és a seed is ezt használja.
 import { addDays, dayDiff, today, uid } from './dates'
 import type { DB, Item, Lot, LotUse, Movement } from './types'
-import { forecastItem, futureAppts, pkgFor, surfacesFor } from './logic'
+import { forecastItem, futureAppts, orderInfo, pkgFor, reserveQty, surfacesFor } from './logic'
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 
@@ -97,11 +97,14 @@ export interface Suggestion { item: Item; qty: number; reason: string; orderBy: 
  */
 export function orderSuggestions(db: DB): Suggestion[] {
   const t0 = today()
-  const onOrder = (id: string) => db.orders.filter(o => o.status === 'ordered').reduce((s, o) => s + o.lines.filter(l => l.item === id).reduce((a, l) => a + l.qty, 0), 0)
+  const onOrder = (id: string) => db.orders.filter(o => o.status === 'ordered' || o.status === 'partial').reduce((s, o) => s + o.lines.filter(l => l.item === id).reduce((a, l) => a + Math.max(0, l.qty - (l.received || 0)), 0), 0)
   const out: Suggestion[] = []
   db.items.forEach(it => {
     const f = forecastItem(db, it)
-    const need = f.level !== 'green' || f.low || f.neg
+    const oi = orderInfo(db, it)
+    // a leadott megrendelés után az anyag kikerül a javaslatból – kivéve, ha a mennyiség nem elég vagy késik a szállítás (11. pont)
+    if (oi.state === 'ordered') return
+    const need = f.level !== 'green' || f.low || f.neg || oi.state === 'short' || oi.state === 'late'
     if (!need) return
     const until = addDays(t0, it.lead)
     let leadUse = 0
@@ -109,10 +112,13 @@ export function orderSuggestions(db: DB): Suggestion[] {
       leadUse += pkgFor(db, a.typeIds, a.planned?.teeth.length || 1, surfacesFor(a.planned?.teeth || [], a.planned?.surfaces))[it.id] || 0
     })
     const ord = onOrder(it.id)
-    const qty = Math.max(0, Math.ceil(it.target - (it.stock - leadUse) - ord))
+    let qty = Math.max(0, Math.ceil(it.target - (it.stock - leadUse) - ord))
+    if (!qty && (oi.state === 'short' || oi.state === 'late')) qty = Math.max(1, Math.ceil(reserveQty(db, it) - (it.stock + ord - leadUse)))
     if (!qty) return
-    const reason = f.neg ? 'a készlet mínuszban van' : f.low ? 'a készlet a célkészlet 10%-a alatt van' : `várhatóan elfogy: ${f.runOut}`
-    out.push({ item: it, qty, reason, orderBy: f.orderBy, level: f.neg || f.low ? 'red' : f.level, onOrder: ord })
+    const reason = oi.state === 'short' ? 'Megrendelve, de a mennyiség nem fedezi a várható fogyást – újabb megrendelés szükséges lehet'
+      : oi.state === 'late' ? `Késik a szállítás (várható beérkezés: ${oi.expected})`
+      : f.neg ? 'a készlet mínuszban van' : f.low ? 'a készlet a célkészlet 10%-a alatt van' : `várhatóan elfogy: ${f.runOut}`
+    out.push({ item: it, qty, reason, orderBy: f.orderBy, level: f.neg || f.low || oi.state !== 'none' ? 'red' : f.level, onOrder: ord })
   })
   return out.sort((a, b) => (a.item.supplier || '').localeCompare(b.item.supplier || '', 'hu') || (a.orderBy || '9999').localeCompare(b.orderBy || '9999'))
 }
@@ -145,3 +151,18 @@ export function tracedFor(db: DB, pid: string, implantOnly = false) {
 /** a kezelés anyagköltsége átlagáron */
 export const materialCost = (db: DB, mats: { item: string; qty: number }[]) =>
   mats.reduce((s, m) => s + m.qty * (db.items.find(i => i.id === m.item)?.price || 0), 0)
+
+/** a bevételezett mennyiség a megrendeléshez rendelhető: teljes beérkezésnél a megrendelés automatikusan lezárul, részlegesnél nyitva marad */
+export function applyReceiptToOrder(db: DB, orderId: string, itemId: string, qty: number, date = today()) {
+  const o = db.orders.find(x => x.id === orderId); if (!o) return null
+  const line = o.lines.find(l => l.item === itemId); if (!line) return null
+  line.received = (line.received || 0) + qty
+  if (o.lines.every(l => (l.received || 0) >= l.qty)) { o.status = 'received'; o.receivedDate = date } else o.status = 'partial'
+  return o
+}
+
+/** megrendelés állapotok: címke és jelvény-osztály */
+export const ORDER_ST: Record<string, [string, string]> = {
+  ordered: ['megrendelve – beérkezésre vár', 'b-blue'], partial: ['részben beérkezett', 'b-yellow'], received: ['beérkezett, lezárva', 'b-green'],
+  closed: ['kézzel lezárva', 'b-gray'], cancelled: ['visszavonva', 'b-gray'],
+}

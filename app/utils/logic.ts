@@ -1,6 +1,6 @@
 // Üzleti szabályok: kezelési csomag, díj, készlet-előrejelzés, meg nem jelenési kockázat, emlékeztetők
-import { addDays, dayDiff, fmtDate, fromYmd, toMin, today } from './dates'
-import type { Appointment, DB, Item, Patient, SurfaceMap, TreatmentType } from './types'
+import { addDays, dayDiff, fmtDate, fromYmd, norm, toMin, today } from './dates'
+import type { Appointment, DB, Item, Order, Patient, Surface, SurfaceMap, TreatmentType } from './types'
 import { surfaceCount } from './teeth'
 
 export const HORIZON = 60 // nap – előrejelzési ablak
@@ -47,7 +47,28 @@ export function typeFee(t: TreatmentType, teeth: number[], surfaces?: SurfaceMap
 export function feeFor(db: DB, typeIds: string[], teeth: number[], surfaces?: SurfaceMap) {
   return typeIds.reduce((s, id) => { const t = typeById(db, id); return s + (t ? typeFee(t, teeth, surfaces) : 0) }, 0)
 }
-export const apptPrice = (db: DB, a: Appointment) => feeFor(db, a.typeIds, a.planned?.teeth || [], a.planned?.surfaces)
+/** egy kezelési tétel díja: tömésnél a felszínek száma (1 / 2 / 3+) szerint, egyébként a művelet díja */
+export function itemFee(db: Pick<DB, 'types'>, typeId: string, surfaces: Surface[] = []) {
+  const t = db.types.find(x => x.id === typeId); if (!t) return 0
+  if (t.priceBySurf && t.needsSurface) return t.priceBySurf[Math.min(3, Math.max(1, surfaces.length)) - 1]!
+  return t.price || 0
+}
+/** kezelési csomag tételenként: alkalmanként = legnagyobb érték, foganként = tételenként, felszínenként = a tétel felszínei (legalább 1) */
+export function pkgForItems(db: Pick<DB, 'types'>, items: { tooth: number | null; typeId: string; surfaces: Surface[] }[]) {
+  const visit: Record<string, number> = {}, mult: Record<string, number> = {}
+  items.forEach(it => {
+    const t = db.types.find(x => x.id === it.typeId); if (!t) return
+    t.mats.forEach(m => {
+      if (m.per === 'tooth') mult[m.item] = (mult[m.item] || 0) + m.qty
+      else if (m.per === 'surface') mult[m.item] = (mult[m.item] || 0) + m.qty * Math.max(1, it.surfaces.length)
+      else visit[m.item] = Math.max(visit[m.item] || 0, m.qty)
+    })
+  })
+  const out: Record<string, number> = {}
+  new Set([...Object.keys(visit), ...Object.keys(mult)]).forEach(k => { out[k] = (visit[k] || 0) + (mult[k] || 0) })
+  return out
+}
+export const apptPrice = (db: DB, a: Appointment) => (a.items?.length ? a.items.reduce((s, i) => s + itemFee(db, i.typeId, i.surfaces), 0) : feeFor(db, a.typeIds, a.planned?.teeth || [], a.planned?.surfaces))
 
 /** a felszínszám a csomaghoz: ha nincs megadva, a fogak száma */
 export const surfacesFor = (teeth: number[], surfaces?: SurfaceMap) => {
@@ -72,16 +93,35 @@ export function futureAppts(db: DB) {
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
 }
 export interface Forecast { planned: number; runOut: string | null; orderBy: string | null; level: 'red' | 'yellow' | 'green'; low: boolean; neg: boolean }
+const plannedUse = (db: DB, it: Item, until: string) => futureAppts(db).filter(a => a.date <= until).reduce((s, a) => {
+  const nT = a.planned?.teeth.length || 1
+  return s + (pkgFor(db, a.typeIds, nT, surfacesFor(a.planned?.teeth || [], a.planned?.surfaces))[it.id] || 0)
+}, 0)
+/** várható fogyás hetente: az elmúlt 8 hét felhasználása és a következő 8 hét előjegyzett kezeléseinek csomagja alapján (spec v2.1, 10. pont) */
+export function weeklyUse(db: DB, it: Item): number {
+  const t0 = today(), since = addDays(t0, -56)
+  const past = db.movements.filter(m => m.item === it.id && m.kind === 'use' && m.date >= since && m.date <= t0).reduce((s, m) => s + Math.max(0, -m.qty), 0)
+  return Math.round(((past + plannedUse(db, it, addDays(t0, 56))) / 16) * 100) / 100
+}
+/** a biztonsági tartalék mennyiségben (darabban); nincs megadva: 0 */
+export function reserveQty(db: DB, it: Item): number {
+  const sf = it.safety; if (!sf || !(sf.value > 0)) return 0
+  return sf.mode === 'weeks' ? Math.ceil(sf.value * weeklyUse(db, it)) : sf.value
+}
+export const reserveLabel = (it: Item) => (it.safety && it.safety.value > 0 ? (it.safety.mode === 'weeks' ? `${it.safety.value} hét fogyása` : `${it.safety.value} ${it.unit}`) : '')
+
 export function forecastItem(db: DB, it: Item): Forecast {
   const t0 = today()
+  const reserve = reserveQty(db, it)
+  const free = it.stock - reserve // a biztonsági tartalék nem számít használhatónak
   let cum = 0, runOut: string | null = null
-  if (it.stock <= 0) runOut = t0
+  if (free <= 0) runOut = t0
   futureAppts(db).forEach(a => {
     const nT = a.planned?.teeth.length || 1
     const q = pkgFor(db, a.typeIds, nT, surfacesFor(a.planned?.teeth || [], a.planned?.surfaces))[it.id] || 0
     if (!q) return
     cum += q
-    if (!runOut && cum > it.stock) runOut = a.date
+    if (!runOut && cum > free) runOut = a.date
   })
   const orderBy = runOut ? addDays(runOut, -it.lead) : null
   let level: Forecast['level'] = 'green'
@@ -89,7 +129,26 @@ export function forecastItem(db: DB, it: Item): Forecast {
   const low = it.stock < it.target * 0.1
   return { planned: cum, runOut, orderBy, level, low, neg: it.stock < 0 }
 }
-export const attention = (db: DB) => db.items.filter(it => { const f = forecastItem(db, it); return f.level === 'red' || f.low || f.neg })
+
+/* ---------- Megrendelések követése (spec v2.1, 11. pont) ---------- */
+export interface OrderInfo { open: number; expected: string | null; orders: Order[]; state: 'none' | 'ordered' | 'short' | 'late' }
+/** nyitott (leadott, még nem teljesen beérkezett) megrendelések egy anyagra, és hogy fedezik-e a várható fogyást */
+export function orderInfo(db: DB, it: Item): OrderInfo {
+  const orders = db.orders.filter(o => (o.status === 'ordered' || o.status === 'partial') && o.lines.some(l => l.item === it.id))
+  const open = orders.reduce((s, o) => s + o.lines.filter(l => l.item === it.id).reduce((a, l) => a + Math.max(0, l.qty - (l.received || 0)), 0), 0)
+  if (!open) return { open: 0, expected: null, orders: [], state: 'none' }
+  const t0 = today()
+  const expected = orders.map(o => o.expected || addDays(o.date, it.lead)).sort()[0]!
+  if (expected < t0) return { open, expected, orders, state: 'late' }
+  const short = it.stock + open - plannedUse(db, it, addDays(t0, it.lead)) < reserveQty(db, it)
+  return { open, expected, orders, state: short ? 'short' : 'ordered' }
+}
+/** a megrendelendő anyagok: a rendelés leadása után kikerülnek, kivéve ha a mennyiség nem elég, késik a szállítás vagy a készlet mínuszban van */
+export const attention = (db: DB) => db.items.filter(it => {
+  const f = forecastItem(db, it)
+  if (!(f.level === 'red' || f.low || f.neg)) return false
+  return f.neg || orderInfo(db, it).state !== 'ordered'
+})
 
 /* ---------- Meg nem jelenés kockázata (2.1.2) ---------- */
 export function apptStartDate(a: Pick<Appointment, 'date' | 'start'>) {
@@ -106,7 +165,7 @@ export function attendanceStats(db: DB, pid: string) {
   }
 }
 export interface Risk { p: number; level: 'low' | 'mid' | 'high'; factors: string[] }
-export function riskFor(db: DB, a: Pick<Appointment, 'patientId' | 'date' | 'start' | 'created' | 'remind' | 'confirmed'>): Risk {
+export function riskFor(db: DB, a: Pick<Appointment, 'patientId' | 'date' | 'start' | 'created' | 'remind'> & { cancelSignal?: Appointment['cancelSignal'] }): Risk {
   const s = attendanceStats(db, a.patientId), f: string[] = []
   let r = 0.06
   if (s.noshow) { r += 0.22 * s.noshow; f.push(`${s.noshow}× nem jelent meg az elmúlt 12 hónapban`) }
@@ -118,7 +177,7 @@ export function riskFor(db: DB, a: Pick<Appointment, 'patientId' | 'date' | 'sta
   if (lead > 21) { r += 0.05; f.push(`${lead} nappal előre foglalt`) }
   const rem = a.remind || { sms: false, email: false }
   if (!rem.sms && !rem.email) { r += 0.06; f.push('nem kér emlékeztetőt') }
-  if (a.confirmed) { r *= 0.4; f.push('visszaigazolta az időpontot') }
+  if (a.cancelSignal) { r = Math.max(r, 0.85); f.push('„NEM” választ küldött az emlékeztetőre') }
   r = Math.max(0.03, Math.min(0.9, r))
   return { p: r, level: r >= 0.3 ? 'high' : r >= 0.15 ? 'mid' : 'low', factors: f }
 }
@@ -126,15 +185,15 @@ export function riskFor(db: DB, a: Pick<Appointment, 'patientId' | 'date' | 'sta
 export const suggestBufferFlag = (db: DB, p: Patient) => !p.needsBuffer && attendanceStats(db, p.id).late >= 2
 
 /* ---------- Emlékeztetők ---------- */
-export interface RemindInfo { ch: string[]; send?: Date; second?: boolean; status: 'none' | 'confirmed' | 'sent' | 'scheduled'; label: string; cls: string }
+export interface RemindInfo { ch: string[]; send?: Date; second?: boolean; status: 'none' | 'cancelled' | 'sent' | 'scheduled'; label: string; cls: string }
 export function remindInfo(a: Appointment): RemindInfo {
   const rem = a.remind || { sms: false, email: false }, ch = [rem.sms && 'SMS', rem.email && 'e-mail'].filter(Boolean) as string[]
   if (!ch.length) return { ch, status: 'none', label: 'Nem kér', cls: 'b-gray' }
   const send = new Date(apptStartDate(a).getTime() - (rem.timing === '48' ? 48 : 24) * 3600000)
   const second = rem.timing === '24+2'
-  if (a.confirmed) return { ch, send, second, status: 'confirmed', label: 'Visszaigazolva', cls: 'b-green' }
-  if (a.sentAt) return { ch, send, second, status: 'sent', label: 'Elküldve (demó)', cls: 'b-blue' }
-  if (send <= new Date()) return { ch, send, second, status: 'sent', label: 'Elküldve (szimulált)', cls: 'b-blue' }
+  if (a.cancelSignal) return { ch, send, second, status: 'cancelled', label: 'Lemondást jelzett', cls: 'b-red' }
+  if (a.sentAt) return { ch, send, second, status: 'sent', label: 'Emlékeztető kiküldve (demó)', cls: 'b-blue' }
+  if (send <= new Date()) return { ch, send, second, status: 'sent', label: 'Emlékeztető kiküldve (szimulált)', cls: 'b-blue' }
   return { ch, send, second, status: 'scheduled', label: 'Ütemezve', cls: 'b-gray' }
 }
 export function fillTpl(db: DB, t: string, a: Pick<Appointment, 'patientId' | 'date' | 'start' | 'doctorId' | 'typeIds'>) {
@@ -148,4 +207,25 @@ export function firstSentence(t: string) { const m = String(t || '').match(/^[^.
 export function extractTodo(t: string) {
   const ss = String(t || '').split(/(?<=[.!?])\s+/)
   return ss.find(x => /(kontroll|javasolt|visszarendel|ellenőrz|múlva|következő alkalom|teendő)/i.test(x) && !/^éves állapotfelmérés/i.test(x)) || ''
+}
+
+/* ---------- Válasz az időpont-emlékeztetőre (spec v2.1, 9. pont) ---------- */
+const lev1 = (a: string, b: string) => {
+  if (a === b) return true
+  if (Math.abs(a.length - b.length) > 1) return false
+  let i = 0, j = 0, d = 0
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue }
+    if (++d > 1) return false
+    if (a.length > b.length) i++; else if (a.length < b.length) j++; else { i++; j++ }
+  }
+  return d + (a.length - i) + (b.length - j) <= 1
+}
+/** „NEM” válasz felismerése: kis- és nagybetűtől, ékezettől és kisebb eltérésektől független („nem”, „Nem tudok jönni”, „nem jövök”, „nemm”) */
+export function isCancelReply(text: string): boolean {
+  const t = norm(text).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!t) return false
+  const toks = t.split(' ')
+  if (toks[0]!.length <= 4 && lev1(toks[0]!, 'nem')) return true
+  return /(^| )(nem (tudok|tudunk|jovok|jovunk|megyek|megyunk|fogok)|lemond|sajnos nem|nem leszek)/.test(t)
 }

@@ -4,14 +4,18 @@
 import { useDataStore } from '~/stores/data'
 import { useInventoryStore } from '~/stores/inventory'
 import { useUiStore } from '~/stores/ui'
-import { fmtDate, today } from '~/utils/dates'
-const props = defineProps<{ supplier: string }>()
+import { addDays, fmtDate, today } from '~/utils/dates'
+const props = defineProps<{ supplier: string; onlyItem?: string }>()
 const data = useDataStore()
 const inv = useInventoryStore()
 const ui = useUiStore()
-const lines = ref(inv.suggestions.filter(s => (s.item.supplier || 'Nincs beszállító') === props.supplier).map(s => ({ item: s.item.id, name: s.item.name, unit: s.item.unit, qty: s.qty })))
+const lines = ref(props.onlyItem
+  ? [inv.itemById(props.onlyItem)!].map(i => ({ item: i.id, name: i.name, unit: i.unit, qty: inv.suggestions.find(s => s.item.id === i.id)?.qty || Math.max(1, Math.round(i.target - i.stock)) }))
+  : inv.suggestions.filter(s => (s.item.supplier || 'Nincs beszállító') === props.supplier).map(s => ({ item: s.item.id, name: s.item.name, unit: s.item.unit, qty: s.qty })))
 const who = ref('')
 const note = ref('')
+const ref_ = ref('')
+const expected = ref(addDays(today(), Math.max(0, ...lines.value.map(l => inv.itemById(l.item)?.lead || 0))))
 const msg = ref('')
 const text = computed(() => [
   `Megrendelés – ${data.db.company.name}, ${data.db.sites[0]?.name || ''}`,
@@ -27,7 +31,7 @@ function done() {
   msg.value = ''
   if (!who.value.trim()) { msg.value = 'Írd be, ki adta le a rendelést.'; return }
   if (!lines.value.some(l => l.qty > 0)) { msg.value = 'Nincs rendelendő tétel.'; return }
-  inv.markOrdered(props.supplier, lines.value.map(l => ({ item: l.item, qty: Number(l.qty) || 0 })), who.value.trim(), note.value.trim())
+  inv.placeOrder(props.supplier, lines.value.map(l => ({ item: l.item, qty: Number(l.qty) || 0 })), who.value.trim(), note.value.trim(), { ref: ref_.value.trim(), expected: expected.value })
   ui.close(); ui.toast('Megrendelés rögzítve – a javaslat frissült')
 }
 </script>
@@ -48,6 +52,10 @@ function done() {
     <div class="grid2">
       <div class="field"><label class="f">Ki adta le? *</label><input v-model="who" class="inp" placeholder="pl. Fehér Kata (asszisztens)"></div>
       <div class="field"><label class="f">Megjegyzés</label><input v-model="note" class="inp" placeholder="pl. telefonon, visszaigazolás e-mailben"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label class="f">Rendelésszám (ha van)</label><input v-model="ref_" class="inp"></div>
+      <div class="field"><label class="f">Várható beérkezés</label><input v-model="expected" type="date" class="inp"><div class="small muted">alapból a leghosszabb beszerzési idő szerint; késésnél a lista jelez</div></div>
     </div>
     <div v-if="msg" class="err">{{ msg }}</div>
     <template #foot>

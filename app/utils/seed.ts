@@ -2,14 +2,16 @@
 // A böngészős demó és a PostgreSQL seed (prisma/seed.ts) ugyanezt a generátort használja.
 import { addDays, dow, fromMin, toMin, today, uid } from './dates'
 import type { Appointment, DB, LotUse, Patient, StatusSnapshot, SurfaceMap, TreatmentRecord } from './types'
-import { defaultItems, defaultNotify, defaultTypes, ROOM_ID, SITE_ID } from './defaults'
+import { defaultItems, defaultNotify, defaultRecallTemplates, defaultTypes, ROOM_ID, SITE_ID, SUGGEST_TPL } from './defaults'
+import { DEFAULT_SYNONYMS } from './codesets'
+import { builtinFilters } from './stockFilter'
 import { analyze, DEFAULT_STATUS_DICT } from './parser'
 import { bufferFor, feeFor, forecastItem, HORIZON, pkgFor, surfacesFor, typeNames } from './logic'
 import { overlaps } from './calendar'
 import { allTeeth } from './teeth'
 import { batchNo, eesztRef, nextInvoiceNo, patientInfoDraft, STER_DEVICES, STER_PROGRAMS } from './office'
 
-export const DB_VERSION = 4
+export const DB_VERSION = 5
 
 function tajFrom(base8: string) {
   const d = base8.split('').map(Number)
@@ -66,11 +68,13 @@ export function seed(): DB {
     settings: {
       clinic: 'Cooldent Kft.', address: '1114 Budapest, Bartók Béla út 56.', phone: '+36 1 555 0123', startHour: 10, endHour: 20,
       notify: defaultNotify(), primaryAgeLimit: 12, patientBuffer: 30, statusDict: DEFAULT_STATUS_DICT.map(d => ({ ...d, kw: [...d.kw] })),
+      recallTemplates: defaultRecallTemplates(), suggestTemplate: SUGGEST_TPL, synonyms: DEFAULT_SYNONYMS.map(x => ({ ...x })),
     },
     doctors: [{ id: 'csempesz', name: 'Dr. Csempesz' }, { id: 'olah', name: 'Dr. Oláh' }],
     items: defaultItems(), types: defaultTypes(),
     patients: [], appointments: [], records: [], movements: [], attachments: [], events: [],
     lots: [], orders: [], sterCycles: [], recallInvites: [], consents: [], invoices: [],
+    suggestions: [], recallSnoozes: [], savedFilters: builtinFilters(),
   }
   const yearsAgo = (y: number, md: string) => `${Number(t0.slice(0, 4)) - y}-${md}`
   const P: [string, string, string, string, string, string, string, string, boolean?][] = [
@@ -219,8 +223,8 @@ export function seed(): DB {
     a.remind = { sms: p.remind.sms, email: p.remind.email, timing: '24' }
     a.created = a.date < t0 ? addDays(a.date, -14) : addDays(t0, -3)
   })
-  const ff = db.appointments.find(a => a.date > t0 && a.patientId === pt(0).id); if (ff) ff.confirmed = true
   seedV2(db)
+  seedV21(db)
   return db
 }
 
@@ -295,5 +299,20 @@ function seedV2(db: DB) {
     db.invoices.push({ id: uid(), no: nextInvoiceNo(db, list[0]!.date), date: list[0]!.date, patientId: p.id, recordIds: list.map(r => r.id), payerName: p.name, payerAddress: p.address, method, fund: method === 'fund' ? 'OTP Egészségpénztár' : '', lines, total: lines.reduce((s, l) => s + l.price * l.qty, 0) })
   })
   // folyamatban lévő megrendelés (munkatárs adta le)
-  db.orders.push({ id: uid(), date: addDays(t0, -2), supplier: 'MedDent Nagykereskedés Zrt.', lines: [{ item: 'ideig', qty: 40 }], orderedBy: 'Fehér Kata (asszisztens)', status: 'ordered', note: 'Telefonon leadva, visszaigazolás e-mailben.' })
+  db.orders.push({ id: uid(), date: addDays(t0, -2), supplier: 'MedDent Nagykereskedés Zrt.', lines: [{ item: 'ideig', qty: 40 }], orderedBy: 'Fehér Kata (asszisztens)', status: 'ordered', note: 'Telefonon leadva, visszaigazolás e-mailben.', expected: addDays(t0, 5) })
+}
+
+/** v2.1 mintaadatai: javasolt (be nem ütemezett) kezelések, egy lemondást jelző időpont */
+function seedV21(db: DB) {
+  const t0 = today()
+  const pt = (i: number) => db.patients[i]!
+  const sg = (pi: number, d: number, tooth: number | null, typeId: string, surfaces: ('M' | 'O' | 'D' | 'V' | 'L')[], urgency: 'urgent' | 'recommended' | 'later', note: string, due: number | null, doctorId = 'csempesz') =>
+    db.suggestions.push({ id: uid(), patientId: pt(pi).id, recordId: null, doctorId, createdAt: addDays(t0, d), tooth, typeId, surfaces, note, urgency, due: due === null ? null : addDays(t0, due), status: 'new', contacts: [] })
+  sg(3, -3, 26, 'tomes', ['O', 'D'], 'recommended', 'Állapotfelmérésen derült ki.', 14)
+  sg(4, -6, 36, 'gyoker', [], 'urgent', 'Fájdalom, sürgős.', -1, 'olah')
+  sg(2, -10, 47, 'tomes', ['O'], 'later', '', 60)
+  const s3 = db.suggestions[2]!; s3.status = 'postponed'; s3.remindAt = addDays(t0, -1); s3.contacts.push({ date: addDays(t0, -8), channel: 'telefon', note: 'Később kéri, jelenleg nem ér rá.' })
+  const fut = db.appointments.filter(a => a.date > t0 && a.status !== 'noshow').sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
+  const c = fut.find(a => a.patientId === pt(7).id) || fut[2]
+  if (c) c.cancelSignal = { at: new Date().toISOString(), text: 'Nem tudok jönni' }
 }

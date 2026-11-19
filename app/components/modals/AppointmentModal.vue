@@ -69,6 +69,11 @@ function setBuf(v: string) { ap.setBuffer(props.id, Number(v)); ui.toast(Number(
       </div>
       <template v-if="a.note"><div>Megjegyzés</div><div>{{ a.note }}</div></template>
       <template v-if="p.internalNote"><div>Belső megjegyzés</div><div><InternalNote :text="p.internalNote" /></div></template>
+      <template v-if="a.cancelSignal && !rec">
+        <div>Lemondás jelezve</div>
+        <div class="warn" style="margin:0">A páciens a következőt válaszolta az emlékeztetőre: „{{ a.cancelSignal.text }}”. Automatikus lemondás nincs: hívd vissza, majd mondd le vagy tartsd meg az időpontot.
+          <div class="row" style="margin-top:6px"><button class="btn sm" @click="ap.clearSignal(a.id); ui.toast('Jelzés törölve – az időpont marad')">Marad az időpont</button><button class="btn sm danger" @click="cancel">Időpont lemondása</button></div></div>
+      </template>
       <div>Emlékeztető</div>
       <div>
         <template v-if="ri && ri.ch.length">{{ ri.ch.join(' + ') }} · {{ a.remind.timing === '48' ? '48' : '24' }} órával előtte{{ ri.second ? ' és 2 órával előtte' : '' }} <span class="badge" :class="ri.cls">{{ ri.label }}</span></template>

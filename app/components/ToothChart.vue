@@ -16,9 +16,12 @@ const props = defineProps<{
   current?: SurfaceMap
   draft?: Record<string, string[]> | null
   flags?: Record<string, string>
+  /** tétel-jelölés: tervezett (kék), kezelés közben hozzáadott (borostyán), elhalasztott (szürke) */
+  marks?: Record<number, 'planned' | 'added' | 'postponed'>
+  hl?: number | null
   clickable?: boolean
 }>()
-const emit = defineEmits<{ tooth: [n: number] }>()
+const emit = defineEmits<{ tooth: [n: number]; hover: [n: number | null] }>()
 const uid = useId()
 const geo = computed(() => chartGeometry(props.dentition))
 const sel = computed(() => new Set(props.selected || []))
@@ -47,9 +50,9 @@ function place(n: number, e: PointerEvent) {
   const y = e.clientY - r.top + 14 > r.height - 150 ? e.clientY - r.top - 170 : e.clientY - r.top + 14
   tip.value = { n, x, y: Math.max(6, y) }
 }
-function enter(n: number, e: PointerEvent) { if (e.pointerType === 'mouse') place(n, e) }
+function enter(n: number, e: PointerEvent) { if (e.pointerType === 'mouse') { place(n, e); emit('hover', n) } }
 function move(n: number, e: PointerEvent) { if (e.pointerType === 'mouse') place(n, e) }
-function leave(e: PointerEvent) { if (e.pointerType === 'mouse') tip.value = null }
+function leave(e: PointerEvent) { if (e.pointerType === 'mouse') { tip.value = null; emit('hover', null) } }
 function down(n: number, e: PointerEvent) {
   longPressed = false
   if (e.pointerType === 'mouse') return
@@ -147,8 +150,13 @@ const statusLabels = (st: string[]) => st.filter(s => s !== 'ep').map(s => STATU
         </g>
         <!-- fogszám -->
         <g :transform="`translate(${g.labelX.toFixed(1)} ${g.labelY.toFixed(1)})`">
+          <rect v-if="hl === g.n" x="-21" y="-19" width="42" height="29" rx="14" fill="none" stroke="#ec2f7b" stroke-width="2.5" />
           <rect v-if="sel.has(g.n) || focus === g.n" x="-17" y="-15" width="34" height="21" rx="10" :fill="focus === g.n ? '#ec2f7b' : 'rgba(236,47,123,.75)'" />
           <text x="0" y="1" text-anchor="middle" font-size="14" font-weight="700" :fill="sel.has(g.n) || focus === g.n ? '#fff' : '#b8c7d6'">{{ g.n }}</text>
+          <g v-if="marks?.[g.n]" :title="marks[g.n]">
+            <circle cx="-18" cy="-14" r="7" :fill="marks[g.n] === 'planned' ? '#2a8ccc' : marks[g.n] === 'added' ? '#f5b31f' : '#94a3b8'" stroke="#fff" stroke-width="1.5" />
+          </g>
+          <circle v-if="view(g.n)?.suggested" cx="0" cy="12" r="5" fill="none" stroke="#ec2f7b" stroke-width="2" stroke-dasharray="3 2" />
           <g v-if="flags?.[g.n]">
             <circle cx="17" cy="-14" r="8" fill="#f5891f" />
             <text x="17" y="-10" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">!</text>

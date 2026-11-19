@@ -16,16 +16,31 @@ export interface RecallRow {
   patient: Patient
   typeId: string
   typeName: string
+  /** a legutóbbi ilyen kezelés dátuma */
   last: string
+  /** a felülvizsgálat esedékessége */
   due: string
   days: number
   state: 'overdue' | 'due' | 'soon'
   invitedAt: string | null
+  invitedVia: string[]
   booked: string | null
+  /** nincs sem e-mail-cím, sem telefonszám */
+  noContact: boolean
+  snoozed: { until: string | null; reason: string } | null
+}
+/** „fél éve”, „7 hónapja”, „2 éve” – a legutóbbi kezelés óta eltelt idő köznyelven */
+export function agoText(from: string, to = today()) {
+  const d = dayDiff(from, to), m = Math.round(d / 30.4)
+  if (d < 45) return `${Math.max(1, d)} napja`
+  if (m === 6) return 'fél éve'
+  if (m < 12) return `${m} hónapja`
+  const y = Math.floor(m / 12), r = m % 12
+  return r === 0 ? (y === 1 ? 'egy éve' : `${y} éve`) : r === 6 ? `${y} és fél éve` : `${y} éve és ${r} hónapja`
 }
 /**
  * Minden páciensre és minden kontrollos kezeléstípusra (recallMonths): a legutóbbi ilyen kezelés + intervallum = esedékesség.
- * Ha a páciensnek van jövőbeli időpontja ugyanerre a típusra, az „foglalva”.
+ * Ha a páciensnek van jövőbeli időpontja ugyanerre a típusra, az „foglalva”. A „nem szükséges / később” jelölt sorok rejthetők.
  */
 export function recallRows(db: DB, aheadDays = 45): RecallRow[] {
   const t0 = today(), out: RecallRow[] = []
@@ -36,9 +51,11 @@ export function recallRows(db: DB, aheadDays = 45): RecallRow[] {
       const due = addMonths(last, t.recallMonths!)
       const days = dayDiff(t0, due)
       if (days > aheadDays) return
+      const sn = (db.recallSnoozes || []).filter(z => z.patientId === p.id && z.typeId === t.id && z.last === last).sort((a, b) => b.date.localeCompare(a.date))[0]
+      const snoozed = sn && (sn.until === null || sn.until > t0) ? { until: sn.until, reason: sn.reason } : null
       const fut = db.appointments.filter(a => a.patientId === p.id && a.date >= t0 && a.typeIds.includes(t.id) && a.status !== 'noshow').map(a => a.date).sort()[0] || null
-      const inv = db.recallInvites.filter(i => i.patientId === p.id && i.typeId === t.id && i.date >= last).map(i => i.date).sort().pop() || null
-      out.push({ patient: p, typeId: t.id, typeName: t.name, last, due, days, state: days < -14 ? 'overdue' : days <= 0 ? 'due' : 'soon', invitedAt: inv, booked: fut })
+      const inv = db.recallInvites.filter(i => i.patientId === p.id && i.typeId === t.id && i.date >= last).sort((a, b) => a.date.localeCompare(b.date)).pop()
+      out.push({ patient: p, typeId: t.id, typeName: t.name, last, due, days, state: days < -14 ? 'overdue' : days <= 0 ? 'due' : 'soon', invitedAt: inv?.date || null, invitedVia: inv?.channels || [], booked: fut, noContact: !p.email && !p.phone, snoozed })
     })
   })
   return out.sort((a, b) => a.due.localeCompare(b.due))
@@ -51,9 +68,13 @@ export const nextRecall = (db: DB, pid: string) => {
   })
   return list.sort((a, b) => a.due.localeCompare(b.due))[0] || null
 }
-export const RECALL_SMS = 'Kedves {név}! Legutóbbi kezelése óta eltelt az ajánlott idő, esedékes: {kezelés}. Foglaljon időpontot a {telefon} számon vagy válaszoljon erre az üzenetre. {klinika}'
-export const recallText = (db: DB, r: Pick<RecallRow, 'patient' | 'typeName'>) =>
-  RECALL_SMS.replace('{név}', r.patient.name).replace('{kezelés}', r.typeName.toLowerCase()).replace('{telefon}', db.settings.phone).replace('{klinika}', db.settings.clinic)
+export const RECALL_SMS = 'Kedves {név}! {mennyi ideje} ({kezelés dátuma}) {kezelés} kezelésen járt nálunk. Ennek felülvizsgálata ({felülvizsgálat}) miatt javasoljuk, hogy egyeztessen időpontot a {telefon} számon. Üdvözlettel: {klinika}'
+/** a kontroll-üzenet sablonból: {név}, {mennyi ideje}, {kezelés dátuma}, {kezelés}, {felülvizsgálat}, {telefon}, {klinika} */
+export function recallText(db: DB, r: Pick<RecallRow, 'patient' | 'typeName' | 'last' | 'due'>, tplId?: string) {
+  const tpl = (db.settings.recallTemplates || []).find(x => x.id === tplId)?.text || db.settings.recallTemplates?.[0]?.text || RECALL_SMS
+  const map: Record<string, string> = { 'név': r.patient.name, 'mennyi ideje': agoText(r.last).replace(/^./, c => c.toUpperCase()), 'kezelés dátuma': fmtDate(r.last), 'kezelés': r.typeName.toLowerCase(), 'felülvizsgálat': fmtDate(r.due), 'telefon': db.settings.phone, 'klinika': db.settings.clinic }
+  return tpl.replace(/\{([^}]+)\}/g, (m, k) => (map[k] !== undefined ? map[k]! : m))
+}
 
 /* ---------- közérthető páciens-tájékoztató ---------- */
 export const LAY: Record<string, { name: string; what: string; care: string[] }> = {

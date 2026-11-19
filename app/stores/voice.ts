@@ -1,6 +1,8 @@
 // Diktálás a böngésző beépített magyar (hu-HU) beszédfelismerésével, folyamatos üzemmódban,
 // köztes eredményekkel. Ha a böngésző nem támogatja, a szöveg gépelhető. (1.0 verzió: nincs AI)
 import { defineStore } from 'pinia'
+import { DICTATION_LIMIT_S } from '~/utils/meta'
+import { useUiStore } from './ui'
 
 type Target = { get: () => string; set: (v: string) => void }
 
@@ -8,6 +10,9 @@ export const useVoiceStore = defineStore('voice', () => {
   const recording = ref(false)
   const message = ref('')
   const supported = ref(false)
+  /** a demóban egy megnyomásra legfeljebb DICTATION_LIMIT_S másodperc rögzíthető (spec v2.1, 1. pont) */
+  const remaining = ref(0)
+  let limitTimer: ReturnType<typeof setInterval> | null = null
   let rec: any = null
   let wanted = false
   let base = ''
@@ -57,15 +62,28 @@ export const useVoiceStore = defineStore('voice', () => {
       }
       recording.value = wanted
     }
-    try { r.start(); recording.value = true; message.value = 'Hallgatlak… beszélj nyugodtan, a felismert szöveg megjelenik.' } catch { wanted = false; recording.value = false }
+    try {
+      r.start(); recording.value = true
+      message.value = `Ez a demó egyszerre csak ${DICTATION_LIMIT_S} másodperc rögzítését engedi. Hallgatlak…`
+      useUiStore().toast(`Ez a demó egyszerre csak ${DICTATION_LIMIT_S} másodperc rögzítését engedi.`)
+      remaining.value = DICTATION_LIMIT_S
+      if (limitTimer) clearInterval(limitTimer)
+      limitTimer = setInterval(() => {
+        remaining.value--
+        if (remaining.value <= 0) { stop(`A ${DICTATION_LIMIT_S} másodperces demó-korlát lejárt, a rögzítés automatikusan leállt. A szöveg javítható; új diktáláshoz nyomd meg újra a gombot.`) }
+      }, 1000)
+    } catch { wanted = false; recording.value = false }
   }
-  function stop() {
+  function stop(msg?: string) {
+    if (limitTimer) { clearInterval(limitTimer); limitTimer = null }
+    remaining.value = 0
     wanted = false
     if (rec) { try { rec.stop() } catch { /* már leállt */ } }
     rec = null
-    if (recording.value) message.value = 'Diktálás leállítva. A szöveg javítható.'
+    if (msg) message.value = msg
+    else if (recording.value) message.value = 'Diktálás leállítva. A szöveg javítható.'
     recording.value = false
   }
 
-  return { recording, message, supported, detect, start, stop }
+  return { recording, message, supported, remaining, detect, start, stop }
 })

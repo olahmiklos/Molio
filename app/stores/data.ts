@@ -4,6 +4,8 @@ import { defineStore } from 'pinia'
 import { useRepository } from '~/repositories'
 import type { DB } from '~/utils/types'
 import { DB_VERSION, seed } from '~/utils/seed'
+import { migrate } from '~/utils/migrate'
+import { setSynonyms } from '~/utils/codesets'
 
 export const useDataStore = defineStore('data', () => {
   const db = ref<DB>(null as unknown as DB)
@@ -14,11 +16,13 @@ export const useDataStore = defineStore('data', () => {
   async function load() {
     const repo = useRepository()
     let loaded = await repo.load().catch(() => null)
+    if (loaded && loaded.version === 4) { loaded = migrate(loaded, DB_VERSION); await repo.save(loaded) }
     if (!loaded || loaded.version !== DB_VERSION) {
       if (loaded) await repo.reset()
       loaded = seed()
       await repo.save(loaded)
     }
+    setSynonyms(loaded.settings.synonyms)
     db.value = loaded
     ready.value = true
     stopWatch?.()
@@ -37,6 +41,7 @@ export const useDataStore = defineStore('data', () => {
     const fresh = seed()
     await repo.save(fresh)
     db.value = fresh
+    setSynonyms(fresh.settings.synonyms)
     stopWatch = watch(db, () => scheduleSave(), { deep: true })
   }
 

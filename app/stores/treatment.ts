@@ -3,11 +3,12 @@
 import { defineStore } from 'pinia'
 import { useDataStore } from './data'
 import { usePatientStore } from './patient'
-import { fmtDate, fromMin, nowMin, today, uid } from '~/utils/dates'
-import type { LotUse, Planned, Surface, SurfaceMap } from '~/utils/types'
-import { analyze, analyzeStatus, type ParseResult, type StatusParse } from '~/utils/parser'
-import { feeFor, pkgFor, recordForAppt, surfacesFor, typeNames } from '~/utils/logic'
-import { SURFACE_ORDER, toothLabel } from '~/utils/teeth'
+import { useSuggestionStore } from './suggestion'
+import { addDays, fmtDate, fromMin, nowMin, today, uid } from '~/utils/dates'
+import type { ItemOrigin, LotUse, Planned, PlannedItem, Surface, SurfaceMap, VisitItem } from '~/utils/types'
+import { analyze, analyzeItems, analyzeStatus, type ItemParse, type ParseResult, type StatusParse } from '~/utils/parser'
+import { itemFee, pkgForItems, recordForAppt, typeNames } from '~/utils/logic'
+import { allTeeth, SURFACE_ORDER, toothLabel } from '~/utils/teeth'
 import { guessDocType } from '~/utils/defaults'
 import { useRepository } from '~/repositories'
 import { consumeStock, previewLots, returnStock } from '~/utils/stock'
@@ -40,9 +41,29 @@ interface Session {
   sterBatch: string | null
   statusText: string
   statusEdits: Record<string, string[]>
+  /** kezelési tételek (spec v2.1, 2. pont): foganként kézzel hozzárendelt műveletek, törölt párok, elhalasztott / javasolt állapot */
+  assign: Record<string, string[]>
+  rmPairs: string[]
+  itemState: Record<string, 'postponed' | 'suggested'>
+  planItems: PlannedItem[]
+  hasPlan: boolean
+  /** javasolt kezelések (12. pont): kézzel felvettek, a diktálásból felismertek közül törölt, módosított adatok */
+  sugExtra: SugDraft[]
+  rmSug: string[]
+  sugMeta: Record<string, Partial<SugDraft>>
+  /** diktálásból felismert fogállapot-változások (4. pont): kikapcsoltak és kézzel felvettek */
+  statusOff: string[]
+  statusManual: Record<string, string[]>
+  confirmedConf: string[]
 }
 
+export type SItemState = 'done' | 'postponed' | 'suggested'
+export interface SItem { key: string; tooth: number | null; typeId: string; surfaces: Surface[]; origin: ItemOrigin; state: SItemState; fee: number }
+export interface SugDraft { key: string; tooth: number | null; typeId: string; surfaces: Surface[]; urgency: 'urgent' | 'recommended' | 'later'; due: string | null; note: string }
+export const pairKey = (tooth: number | null, typeId: string) => `${tooth ?? 0}:${typeId}`
+
 const EMPTY_PARSE: ParseResult = { teeth: [], surfaces: {}, orphanSurfaces: [], types: [], qty: {}, rel: {}, offDentition: [] }
+const EMPTY_ITEMS: ItemParse = { done: [], suggested: [], suggestOnlyTeeth: [], doneTypes: [], conflicts: [] }
 
 export const useTreatmentStore = defineStore('treatment', () => {
   const data = useDataStore()
@@ -51,32 +72,57 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const s = ref<Session | null>(null)
   const parsed = ref<ParseResult>(EMPTY_PARSE)
   const statusParsed = ref<StatusParse>({ teeth: {}, unparsed: [], offDentition: [] })
+  const itemParse = ref<ItemParse>(EMPTY_ITEMS)
+  const dictStatus = ref<Record<string, string[]>>({})
+  const sugs = useSuggestionStore()
   let timer: ReturnType<typeof setTimeout> | null = null
   let sTimer: ReturnType<typeof setTimeout> | null = null
 
+  const isBound = (id: string) => !!db.value.types.find(t => t.id === id)?.toothBound
   const patient = computed(() => (s.value ? patients.byId(s.value.patientId) : undefined))
   const dentition = computed(() => patient.value?.dentition || 'permanent')
 
   function base(o: Partial<Session> & { patientId: string; doctorId: string; date: string; time: string }): Session {
-    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, ...o }
+    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], ...o }
   }
   const nowSlot = () => fromMin(Math.min(Math.max(Math.floor(nowMin() / 30) * 30, db.value.settings.startHour * 60), db.value.settings.endHour * 60 - 30))
 
-  /** kezelés indítása az időpontból: a páciens, a kezeléstípus és a tervezett fog/felszín átkerül */
+  /** az előjegyzett tételek: a foglalás saját tételei, vagy a tervezett fogak × a foglalt műveletek */
+  function plannedItemsOf(a: { items?: PlannedItem[]; planned?: Planned | null; typeIds: string[] }): PlannedItem[] {
+    if (a.items?.length) return a.items.map(i => ({ ...i, surfaces: [...i.surfaces] }))
+    const out: PlannedItem[] = []
+    a.typeIds.forEach(tid => {
+      if (isBound(tid) && a.planned?.teeth.length) a.planned.teeth.forEach(n => out.push({ tooth: n, typeId: tid, surfaces: [...(a.planned!.surfaces[n] || [])] }))
+      else out.push({ tooth: null, typeId: tid, surfaces: [] })
+    })
+    return out
+  }
+  /** kezelés indítása az időpontból: a páciens, az előjegyzett tételek és a tervezett fog/felszín átkerül */
   function startFromAppointment(apptId: string) {
     const a = db.value.appointments.find(x => x.id === apptId); if (!a) return
     const planned = a.planned ? JSON.parse(JSON.stringify(a.planned)) as Planned : null
-    s.value = base({ patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: today(), time: a.date === today() ? a.start : nowSlot(), types: [...a.typeIds], planned, teeth: planned ? [...planned.teeth] : [], manualSurf: planned ? JSON.parse(JSON.stringify(planned.surfaces)) : {} })
-    parsed.value = EMPTY_PARSE
+    const planItems = plannedItemsOf(a)
+    const assign: Record<string, string[]> = {}, surf: SurfaceMap = {}
+    planItems.forEach(i => { if (i.tooth) { (assign[i.tooth] = assign[i.tooth] || []).push(i.typeId); surf[i.tooth] = [...new Set([...(surf[i.tooth] || []), ...i.surfaces])] } })
+    const teeth = [...new Set(planItems.map(i => i.tooth).filter((n): n is number => !!n))]
+    s.value = base({ patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: today(), time: a.date === today() ? a.start : nowSlot(), types: [...a.typeIds], planned, teeth, assign, planItems, hasPlan: true, manualSurf: planned ? { ...JSON.parse(JSON.stringify(planned.surfaces)), ...surf } : surf })
+    parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
   }
   function startNew(pid: string) {
     s.value = base({ patientId: pid, doctorId: db.value.doctors[0]!.id, date: today(), time: nowSlot() })
-    parsed.value = EMPTY_PARSE
+    parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
   }
   function editRecord(rid: string) {
     const r = db.value.records.find(x => x.id === rid); if (!r) return
-    s.value = base({ recordId: r.id, sterBatch: r.sterBatch ?? null, patientId: r.patientId, appointmentId: r.appointmentId, doctorId: r.doctorId, date: r.date, time: r.time, teeth: [...r.teeth], types: [...r.typeIds], text: r.text, manualSurf: JSON.parse(JSON.stringify(r.surfaces || {})), planned: r.planned ? JSON.parse(JSON.stringify(r.planned)) : null })
+    const assign: Record<string, string[]> = {}, itemState: Session['itemState'] = {}
+    const its = r.items?.filter(i => i.typeId) || []
+    its.forEach(i => { if (i.tooth) { (assign[i.tooth] = assign[i.tooth] || []).push(i.typeId); if (i.state === 'postponed') itemState[pairKey(i.tooth, i.typeId)] = 'postponed' } else if (i.state === 'postponed') itemState[pairKey(null, i.typeId)] = 'postponed' })
+    const teeth = r.items?.length ? [...new Set(r.items.map(i => i.tooth).filter((n): n is number => !!n))] : [...r.teeth]
+    const types = r.items?.length ? [...new Set(its.map(i => i.typeId))] : [...r.typeIds]
+    s.value = base({ recordId: r.id, sterBatch: r.sterBatch ?? null, patientId: r.patientId, appointmentId: r.appointmentId, doctorId: r.doctorId, date: r.date, time: r.time, teeth, types, assign, itemState, text: r.text, manualSurf: JSON.parse(JSON.stringify(r.surfaces || {})), planned: r.planned ? JSON.parse(JSON.stringify(r.planned)) : null,
+      hasPlan: !!r.planned || !!r.items?.some(i => i.origin !== 'manual'), planItems: (r.items || []).filter(i => i.origin === 'planned').map(i => ({ tooth: i.tooth, typeId: i.typeId, surfaces: [...i.surfaces] })) })
     parsed.value = analyze(r.text, db.value, { dentition: dentition.value })
+    itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
     const saved: Record<string, number> = {}; r.materials.forEach(m => { saved[m.item] = m.qty })
     rows.value.forEach(row => { if (!(row.id in saved)) s.value!.unchecked.push(row.id) })
     Object.entries(saved).forEach(([k, q]) => { s.value!.overrides[k] = q; if (!s.value!.extra.includes(k)) s.value!.extra.push(k) })
@@ -92,10 +138,24 @@ export const useTreatmentStore = defineStore('treatment', () => {
   }
   function applyParse() {
     if (!s.value) return
-    parsed.value = analyze(s.value.text, db.value, { dentition: dentition.value })
-    parsed.value.teeth.forEach(t => { if (!s.value!.rmTeeth.includes(t) && !s.value!.teeth.includes(t)) s.value!.teeth.push(t) })
-    parsed.value.types.forEach(t => { if (!s.value!.rmTypes.includes(t) && !s.value!.types.includes(t)) s.value!.types.push(t) })
-    if (parsed.value.teeth.length) s.value.focusTooth = parsed.value.teeth[parsed.value.teeth.length - 1]!
+    const x = s.value
+    parsed.value = analyze(x.text, db.value, { dentition: dentition.value })
+    itemParse.value = analyzeItems(x.text, db.value)
+    const ip = itemParse.value
+    // a csak javaslatként említett fog és művelet nem elvégzett kezelés (12. pont)
+    if (ip.suggested.length) {
+      parsed.value.teeth = parsed.value.teeth.filter(t => !ip.suggestOnlyTeeth.includes(t))
+      parsed.value.types = parsed.value.types.filter(t => ip.doneTypes.includes(t))
+    }
+    // fogállapot-változás a diktálásból (4. pont): csak a kimondott fogakra
+    dictStatus.value = analyzeStatus(x.text, db.value.settings.statusDict, dentition.value, { explicitOnly: true }).teeth
+    // a csak állapotként említett fog (pl. „16-os hiányzik”) nem kezelt fog
+    const doneTeeth = new Set(ip.done.map(d => d.tooth))
+    const statusOnly = Object.keys(dictStatus.value).map(Number).filter(n => !doneTeeth.has(n))
+    parsed.value.teeth = parsed.value.teeth.filter(t => !statusOnly.includes(t))
+    parsed.value.teeth.forEach(t => { if (!x.rmTeeth.includes(t) && !x.teeth.includes(t)) x.teeth.push(t) })
+    parsed.value.types.forEach(t => { if (!x.rmTypes.includes(t) && !x.types.includes(t)) x.types.push(t) })
+    if (parsed.value.teeth.length) x.focusTooth = parsed.value.teeth[parsed.value.teeth.length - 1]!
   }
   /** kézi felülbírálat: a levett fogat vagy kezelést újraértelmezéskor nem jelöli vissza */
   function toggleTooth(n: number) {
@@ -141,11 +201,90 @@ export const useTreatmentStore = defineStore('treatment', () => {
   })
   const offDentition = computed(() => (s.value ? s.value.teeth.filter(n => parsed.value.offDentition.includes(n)) : []))
 
+  /* ---------- kezelési tételek: fog × művelet (2. pont) ---------- */
+  const items = computed<SItem[]>(() => {
+    const x = s.value; if (!x) return []
+    const explicit: { tooth: number | null; typeId: string }[] = []
+    const addP = (tooth: number | null, typeId: string) => { if (!explicit.some(p => p.tooth === tooth && p.typeId === typeId)) explicit.push({ tooth, typeId }) }
+    itemParse.value.done.forEach(p => addP(p.tooth, p.typeId))
+    Object.entries(x.assign).forEach(([n, ts]) => ts.forEach(t => addP(Number(n), t)))
+    x.planItems.forEach(p => { if (p.tooth) addP(p.tooth, p.typeId) })
+    const valid = (p: { tooth: number | null; typeId: string }) => x.types.includes(p.typeId) && (p.tooth === null || x.teeth.includes(p.tooth)) && !x.rmPairs.includes(pairKey(p.tooth, p.typeId))
+    const pairs = explicit.filter(p => p.tooth !== null && valid(p))
+    const covered = new Set(pairs.map(p => p.tooth))
+    x.types.forEach(tid => {
+      if (isBound(tid)) {
+        const has = explicit.some(p => p.typeId === tid && p.tooth !== null && x.teeth.includes(p.tooth))
+        x.teeth.forEach(n => {
+          if (pairs.some(p => p.tooth === n && p.typeId === tid)) return
+          // kézzel jelölt fog: minden olyan műveletet megkap, amelyhez még nincs explicit fog
+          if ((!has || !covered.has(n)) && !x.rmPairs.includes(pairKey(n, tid))) pairs.push({ tooth: n, typeId: tid })
+        })
+      } else if (!x.rmPairs.includes(pairKey(null, tid))) pairs.push({ tooth: null, typeId: tid })
+    })
+    return pairs.sort((a, b) => (a.tooth ?? 999) - (b.tooth ?? 999)).map(p => {
+      const key = pairKey(p.tooth, p.typeId)
+      const planned = x.planItems.some(i => i.tooth === p.tooth && i.typeId === p.typeId)
+      const origin: ItemOrigin = planned ? 'planned' : x.hasPlan ? 'added' : 'manual'
+      const st = x.itemState[key] === 'postponed' ? 'postponed' : 'done'
+      const sf = p.tooth ? [...(surfaces.value[p.tooth] || [])] : []
+      return { key, tooth: p.tooth, typeId: p.typeId, surfaces: sf, origin, state: st as SItemState, fee: itemFee(db.value, p.typeId, sf) }
+    })
+  })
+  const doneItems = computed(() => items.value.filter(i => i.state === 'done'))
+  const itemTotal = computed(() => doneItems.value.reduce((a, i) => a + i.fee, 0))
+  function setItemState(key: string, st: 'done' | 'postponed') { const x = s.value; if (!x) return; if (st === 'done') delete x.itemState[key]; else x.itemState[key] = 'postponed' }
+  function removeItem(key: string) {
+    const x = s.value; if (!x) return
+    if (!x.rmPairs.includes(key)) x.rmPairs.push(key)
+    const it = items.value.find(i => i.key === key)
+    if (it?.tooth && x.assign[it.tooth]) x.assign[it.tooth] = x.assign[it.tooth]!.filter(t => t !== it.typeId)
+  }
+  /** kezelés közben hozzáadott tétel (a kartonba „hozzáadva” jelöléssel kerül) */
+  function addItem(tooth: number | null, typeId: string) {
+    const x = s.value; if (!x) return
+    if (tooth && !x.teeth.includes(tooth)) { x.teeth.push(tooth); x.rmTeeth = x.rmTeeth.filter(t => t !== tooth) }
+    if (!x.types.includes(typeId)) { x.types.push(typeId); x.rmTypes = x.rmTypes.filter(t => t !== typeId) }
+    x.rmPairs = x.rmPairs.filter(k => k !== pairKey(tooth, typeId))
+    if (tooth) { x.assign[tooth] = [...new Set([...(x.assign[tooth] || []), typeId])]; x.focusTooth = tooth }
+  }
+
+  /* ---------- javasolt további kezelések (12. pont) ---------- */
+  const suggestList = computed<SugDraft[]>(() => {
+    const x = s.value; if (!x) return []
+    const list: SugDraft[] = itemParse.value.suggested.filter(p => !x.rmSug.includes(pairKey(p.tooth, p.typeId))).map(p => ({
+      key: pairKey(p.tooth, p.typeId), tooth: p.tooth, typeId: p.typeId, surfaces: p.tooth ? [...(surfaces.value[p.tooth] || x.manualSurf[p.tooth] || [])] : [],
+      urgency: p.urgent ? 'urgent' : 'recommended', due: p.dueDays !== null ? addDays(x.date, p.dueDays) : null, note: '' }))
+    x.sugExtra.forEach(e => { if (!list.some(l => l.key === e.key)) list.push(e) })
+    return list.map(l => ({ ...l, ...(x.sugMeta[l.key] || {}) }))
+  })
+  function addSuggestion(tooth: number | null, typeId: string) {
+    const x = s.value; if (!x) return
+    const key = pairKey(tooth, typeId); x.rmSug = x.rmSug.filter(k => k !== key)
+    if (!x.sugExtra.some(e => e.key === key)) x.sugExtra.push({ key, tooth, typeId, surfaces: [], urgency: 'recommended', due: null, note: '' })
+  }
+  function removeSuggestion(key: string) { const x = s.value; if (!x) return; x.sugExtra = x.sugExtra.filter(e => e.key !== key); if (!x.rmSug.includes(key)) x.rmSug.push(key) }
+  function setSuggestion(key: string, patch: Partial<SugDraft>) { const x = s.value; if (!x) return; x.sugMeta[key] = { ...(x.sugMeta[key] || {}), ...patch } }
+
+  /* ---------- diktált fogállapot-változás (4. pont) ---------- */
+  const statusChanges = computed(() => {
+    const x = s.value; if (!x) return [] as { tooth: number; from: string[]; to: string[]; manual: boolean }[]
+    const prev = patients.latestStatus(x.patientId)?.teeth || {}
+    const merged: Record<string, string[]> = {}
+    Object.entries(dictStatus.value).forEach(([n, st]) => { if (!x.statusOff.includes(n)) merged[n] = st })
+    Object.entries(x.statusManual).forEach(([n, st]) => { merged[n] = st })
+    return Object.entries(merged).map(([n, to]) => ({ tooth: Number(n), from: prev[n] || [], to, manual: n in x.statusManual }))
+      .filter(c => [...c.from].sort().join() !== [...c.to].sort().join()).sort((a, b) => a.tooth - b.tooth)
+  })
+  function setStatusChange(n: number, to: string[] | null) { const x = s.value; if (!x) return; if (to === null) { delete x.statusManual[n]; if (!x.statusOff.includes(String(n))) x.statusOff.push(String(n)) } else { x.statusManual[n] = to; x.statusOff = x.statusOff.filter(k => k !== String(n)) } }
+  /** „bal alsó 48-as”: az oldal és a fogszám ellentmond – a mentés előtt meg kell erősíteni */
+  const sideConflicts = computed(() => itemParse.value.conflicts.filter(c => !s.value?.confirmedConf.includes(c.key)))
+  function confirmConflict(key: string) { const x = s.value; if (x && !x.confirmedConf.includes(key)) x.confirmedConf.push(key) }
+
   /* ---------- anyagjavaslat ---------- */
   const rows = computed<MatRow[]>(() => {
     const x = s.value; if (!x) return []
-    const teeth = x.teeth
-    const pkg = pkgFor(db.value, x.types, Math.max(1, teeth.length), surfacesFor(teeth, surfaces.value))
+    const pkg = pkgForItems(db.value, doneItems.value)
     const ids = new Set([...Object.keys(pkg), ...Object.keys(parsed.value.qty), ...Object.keys(parsed.value.rel || {}), ...x.extra])
     const order = db.value.items.map(i => i.id)
     return [...ids].filter(id => db.value.items.some(i => i.id === id)).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(id => {
@@ -169,7 +308,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   function resetQty(id: string) { if (s.value) delete s.value.overrides[id] }
   function addMaterial(id: string) { const x = s.value; if (!x) return; if (!x.extra.includes(id)) x.extra.push(id); setChecked(id, true); if (x.overrides[id] === undefined) x.overrides[id] = 1 }
 
-  const fee = computed(() => (s.value ? feeFor(db.value, s.value.types, s.value.teeth, surfaces.value) : 0))
+  const fee = itemTotal
   /** a kiadandó gyártási tételek előnézete (lejárat szerint) */
   const lotPreview = (id: string, qty: number) => (db.value.items.find(i => i.id === id)?.lotTracked ? previewLots(db.value, id, qty) : [])
   const cost = computed(() => rows.value.filter(r => r.checked && r.qty > 0).reduce((sum, r) => sum + r.qty * (db.value.items.find(i => i.id === r.id)?.price || 0), 0))
@@ -203,13 +342,16 @@ export const useTreatmentStore = defineStore('treatment', () => {
   /** jóváhagyás: a kartonba kerül, az anyagok levonódnak a raktárból; visszaadja a készlet-figyelmeztetéseket és a státuszjavaslatot */
   function approve() {
     const x = s.value; if (!x) return null
-    if (!x.types.length && !x.text.trim()) return { error: 'Válassz kezelést vagy diktálj leírást.' }
+    if (!items.value.length && !x.text.trim()) return { error: 'Válassz kezelést vagy diktálj leírást.' }
+    if (sideConflicts.value.length) return { error: 'Oldal és fogszám ellentmond (' + sideConflicts.value.map(c => c.said).join(', ') + '). Erősítsd meg a fogszámot a mentés előtt.' }
     const mats = rows.value.filter(r => r.checked && r.qty > 0).map(r => ({ item: r.id, qty: r.qty }))
     const before: Record<string, number> = {}; db.value.items.forEach(i => { before[i.id] = i.stock })
-    const teeth = [...x.teeth].sort((a, b) => a - b)
+    const done = doneItems.value
+    const typeIds = [...new Set(done.map(i => i.typeId))]
+    const teeth = [...new Set(done.map(i => i.tooth).filter((n): n is number => !!n))].sort((a, b) => a - b)
     const surf: SurfaceMap = {}; teeth.forEach(n => { if (surfaces.value[n]?.length) surf[n] = [...surfaces.value[n]!] })
-    const tn = typeNames(db.value, x.types)
-    const common = { doctorId: x.doctorId, typeIds: [...x.types], teeth, surfaces: surf, planned: x.planned, extended: extendedTeeth.value.length > 0, text: x.text.trim(), fee: fee.value, sterBatch: x.sterBatch }
+    const tn = typeNames(db.value, typeIds)
+    const common = { doctorId: x.doctorId, typeIds, teeth, surfaces: surf, items: items.value.map(i => ({ id: uid(), tooth: i.tooth, typeId: i.typeId, surfaces: i.surfaces, origin: i.origin, state: i.state as 'done' | 'postponed', fee: i.fee })) as VisitItem[], planned: x.planned, extended: extendedTeeth.value.length > 0, text: x.text.trim(), fee: fee.value, sterBatch: x.sterBatch }
     const item = (id: string) => db.value.items.find(i => i.id === id)
     let recId: string
     if (x.recordId) {
@@ -230,6 +372,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
         }
         db.value.movements.push({ id: uid(), item: id, date: today(), qty: -diff, kind: 'corr', recordId: rec.id, patientId: rec.patientId, note: 'Kezelés utólagos módosítása (' + fmtDate(rec.date) + ')', lots: diff > 0 ? lots : undefined })
       })
+      rec.editLog = [...(rec.editLog || []), { at: today() + ' ' + fromMin(nowMin()), by: db.value.doctors.find(d => d.id === x.doctorId)?.name || '', note: 'Utólagos módosítás' }]
       Object.assign(rec, common, { materials: newMats.map(m => ({ ...m, lots: m.lots?.length ? m.lots : undefined, cost: m.qty * (item(m.item)?.price || 0) })) }); recId = rec.id
     } else {
       recId = uid()
@@ -256,9 +399,16 @@ export const useTreatmentStore = defineStore('treatment', () => {
       const t = db.value.types.find(v => v.id === id)
       if (t?.statusAfter) teeth.forEach(n => { statusOffer[n] = [...new Set([...(statusOffer[n] || []), t.statusAfter!])] })
     })
+    // javasolt további kezelések: asszisztensi teendőlista (12. pont); a most elvégzett tételek lezárják a korábbi javaslatot
+    suggestList.value.forEach(g => sugs.add({ patientId: x.patientId, recordId: recId, doctorId: x.doctorId, tooth: g.tooth, typeId: g.typeId, surfaces: g.surfaces, note: g.note, urgency: g.urgency, due: g.due, remindAt: null, callback: false }))
+    sugs.completeFor(x.patientId, x.appointmentId, done.map(i => ({ tooth: i.tooth, typeId: i.typeId })))
+    // diktált fogállapot-változás: rögzítés a státuszba, a kezelés napjával (4. pont)
+    const chg = statusChanges.value
+    if (chg.length) { const m: Record<string, string[]> = {}; chg.forEach(c => { m[c.tooth] = c.to }); patients.addStatus(x.patientId, m, 'Diktálásból rögzítve', 'dictation') }
+    const nSug = suggestList.value.length
     const pid = x.patientId
     s.value = null
-    return { warns, statusOffer, patientId: pid, recordId: recId, hasInfo: !x.recordId }
+    return { warns, statusOffer, patientId: pid, recordId: recId, hasInfo: !x.recordId, statusChanged: chg.length, suggested: nSug }
   }
 
   /* ---------- fogazati státusz felvétele diktálással (2.2.6) ---------- */
@@ -301,6 +451,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   return {
     s, parsed, statusParsed, patient, dentition, active,
     startFromAppointment, startNew, editRecord, setText, applyParse, toggleTooth, focus, toggleType,
+    items, doneItems, itemTotal, setItemState, removeItem, addItem, itemParse, suggestList, addSuggestion, removeSuggestion, setSuggestion, statusChanges, setStatusChange, sideConflicts, confirmConflict, dictStatus,
     surfaces, toggleSurface, needsSurface, missingSurface, extendedTeeth, offDentition,
     rows, toReview, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
     attachments, upload, cancel, hasUnsaved, approve,

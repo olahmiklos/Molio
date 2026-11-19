@@ -3,11 +3,15 @@ import { useDataStore } from '~/stores/data'
 import { useUiStore } from '~/stores/ui'
 import { useInventoryStore } from '~/stores/inventory'
 import { useTreatmentStore } from '~/stores/treatment'
-import { SPEC, APP_VERSION } from '~/utils/meta'
+import { useSuggestionStore } from '~/stores/suggestion'
+import { useAppointmentStore } from '~/stores/appointment'
+import { BUILD_DATE_HU, SPEC, VERSION_LINE } from '~/utils/meta'
 
 const data = useDataStore()
 const ui = useUiStore()
 const inv = useInventoryStore()
+const sugs = useSuggestionStore()
+const ap = useAppointmentStore()
 const tx = useTreatmentStore()
 const route = useRoute()
 const st = computed(() => data.db.settings)
@@ -77,6 +81,12 @@ onMounted(() => {
     <NuxtLink v-if="inv.alerts.length" to="/raktar" class="alertbar">
       ⚠ {{ inv.alerts.length }} anyagot szükséges megrendelni: {{ inv.alerts.map(i => i.name).join(', ') }} – megnyitás a Raktárban →
     </NuxtLink>
+    <NuxtLink v-if="sugs.count" to="/emlekeztetok?tab=todo" class="alertbar" style="background:#fff3e0;color:#9a4b00">
+      📋 {{ sugs.count }} javasolt kezeléshez időpontot kell egyeztetni{{ sugs.overdueCount ? ` (${sugs.overdueCount} határidőn túl)` : '' }} – megnyitás a Teendők között →
+    </NuxtLink>
+    <NuxtLink v-if="ap.signals.length" to="/emlekeztetok" class="alertbar" style="background:#fdecea;color:#a1241a">
+      ✉ {{ ap.signals.length }} páciens lemondást jelzett az emlékeztetőre (NEM válasz) – az asszisztens döntése szükséges →
+    </NuxtLink>
     <div v-if="ui.updateAvailable" class="hint" style="margin:0;border-radius:0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <b>Új verzió érhető el.</b><span>A folyamatban lévő munka befejezése után magától frissül, vagy most is újratöltheted.</span>
       <button class="btn sm pri" @click="ui.applyUpdate()">Újratöltés most</button>
@@ -95,8 +105,8 @@ onMounted(() => {
         <div class="ph">{{ st.phone }}</div>
       </div>
       <div class="small" style="opacity:.75;max-width:420px;line-height:1.5">
-        Molio {{ APP_VERSION }} – bemutató program kitalált adatokkal.<br>
-        Készült: <b>{{ SPEC.title }}</b> ({{ SPEC.version }}) alapján. <NuxtLink to="/nevjegy">Névjegy</NuxtLink> · <NuxtLink to="/sugo">Felhasználói kézikönyv (PDF)</NuxtLink>
+        <b>{{ VERSION_LINE }}</b> · build: {{ BUILD_DATE_HU }} – bemutató program kitalált adatokkal.<br>
+        Specifikáció: {{ SPEC.title }}. <NuxtLink to="/nevjegy">Névjegy</NuxtLink> · <NuxtLink to="/sugo">Felhasználói kézikönyv (PDF)</NuxtLink>
       </div>
       <div class="dots"><i style="background:#ec2f7b" /><i style="background:#f5891f" /><i style="background:#13b0a5" /><i style="background:#3fa463" /><i style="background:#8b4fe0" /><i style="background:#2a8ccc" /></div>
     </footer>
@@ -117,7 +127,7 @@ onMounted(() => {
         <div class="mh"><h2>Megerősítés</h2></div>
         <div class="mb" style="line-height:1.55" v-html="ui.confirmState.msg" />
         <div class="mf">
-          <button class="btn" @click="ui.answer(false)">Mégse</button>
+          <button class="btn" @click="ui.answer(false)">{{ ui.confirmState.no }}</button>
           <button class="btn" :class="ui.confirmState.danger ? 'danger' : 'pri'" @click="ui.answer(true)">{{ ui.confirmState.yes }}</button>
         </div>
       </div>

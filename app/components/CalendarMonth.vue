@@ -5,7 +5,7 @@ import { useAppointmentStore } from '~/stores/appointment'
 import { addDays, DAYS, dow, fmtLong, fromYmd, shortName, today, ymd } from '~/utils/dates'
 import type { Appointment } from '~/utils/types'
 import { docIdx, typeNames } from '~/utils/logic'
-import { apptsOn, slotsList } from '~/utils/calendar'
+import { apptsOn, conflictsOf, slotsList } from '~/utils/calendar'
 
 const props = defineProps<{ date: string }>()
 const emit = defineEmits<{ 'open-day': [d: string]; 'open-appt': [a: Appointment] }>()
@@ -44,8 +44,8 @@ const pname = (a: Appointment) => db.value.patients.find(p => p.id === a.patient
         </div>
         <div v-if="c.we" class="small muted">zárva</div>
         <div v-else class="mc-bar"><i :class="c.lvl" :style="`width:${Math.min(100, c.tPct)}%`" /><i class="bufp" :style="`width:${Math.min(100 - c.tPct, c.bPct)}%`" /></div>
-        <div v-for="a in c.list.slice(0, 4)" :key="a.id" class="mc-a" :class="`d${docIdx(db, a.doctorId)}`" :title="`${pname(a)} – ${typeNames(db, a.typeIds)}${a.buffer ? ` · ráhagyás ${a.buffer} perc` : ''}`" @click.stop="emit('open-appt', a)">
-          {{ ap.isDone(a) ? '✓ ' : a.status === 'noshow' ? '✗ ' : a.date >= t0 && ap.risk(a).level === 'high' ? '⚠ ' : '' }}{{ a.start }} {{ shortName(pname(a)) }}<i v-if="a.buffer" class="bdot" />
+        <div v-for="a in c.list.slice(0, 4)" :key="a.id" class="mc-a" :class="[`d${docIdx(db, a.doctorId)}`, { conflict: !ap.isDone(a) && conflictsOf(db, a).length > 0 }]" :title="`${pname(a)} – ${typeNames(db, a.typeIds)}${a.buffer ? ` · ráhagyás ${a.buffer} perc` : ''}`" @click.stop="emit('open-appt', a)">
+          {{ ap.isDone(a) ? '✓ ' : conflictsOf(db, a).length ? '‼ ' : a.cancelSignal ? '✉ ' : a.status === 'noshow' ? '✗ ' : a.date >= t0 && ap.risk(a).level === 'high' ? '⚠ ' : '' }}{{ a.start }} {{ shortName(pname(a)) }}<i v-if="a.buffer" class="bdot" />
         </div>
         <div v-if="c.list.length > 4" class="small muted">+{{ c.list.length - 4 }} további</div>
       </div>

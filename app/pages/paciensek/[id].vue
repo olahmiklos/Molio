@@ -19,6 +19,12 @@ import ConsentModal from '~/components/modals/ConsentModal.vue'
 import { useOfficeStore } from '~/stores/office'
 import { tracedFor } from '~/utils/stock'
 import { nextRecall } from '~/utils/office'
+import { useSuggestionStore } from '~/stores/suggestion'
+import { useAppointmentStore } from '~/stores/appointment'
+import AppointmentModal from '~/components/modals/AppointmentModal.vue'
+import SuggestionModal from '~/components/modals/SuggestionModal.vue'
+import { isOverdue, sugFee, sugTotal, SUG_STATUS, URGENCY } from '~/utils/suggest'
+import { apptPrice } from '~/utils/logic'
 
 const route = useRoute()
 const data = useDataStore()
@@ -27,13 +33,26 @@ const tx = useTreatmentStore()
 const ui = useUiStore()
 const pdf = usePdf()
 const office = useOfficeStore()
+const sugs = useSuggestionStore()
+const ap = useAppointmentStore()
 const db = computed(() => data.db)
 const id = computed(() => String(route.params.id))
 const p = computed(() => patients.byId(id.value))
 const recs = computed(() => patients.recordsOf(id.value))
+/* ---------- Kezelések almenü: következő és korábbi (13. pont) ---------- */
+const fText = ref(''), fType = ref(''), fDoc = ref(''), fFrom = ref(''), fTo = ref('')
+const filtered = computed(() => recs.value.filter(r =>
+  (!fType.value || r.typeIds.includes(fType.value) || r.items?.some(i => i.typeId === fType.value)) && (!fDoc.value || r.doctorId === fDoc.value) &&
+  (!fFrom.value || r.date >= fFrom.value) && (!fTo.value || r.date <= fTo.value) &&
+  (!fText.value.trim() || (r.text + ' ' + typeNames(db.value, r.typeIds) + ' ' + r.teeth.join(' ')).toLowerCase().includes(fText.value.trim().toLowerCase()))))
+const pending = computed(() => sugs.pending(id.value))
+const tname = (tid: string) => db.value.types.find(x => x.id === tid)?.name || tid
+const plannedLine = (a: { items?: { tooth: number | null; typeId: string }[]; typeIds: string[] }) =>
+  a.items?.length ? a.items.map(i => (i.tooth ? i.tooth + ': ' : '') + tname(i.typeId)).join(' · ') : typeNames(db.value, a.typeIds)
+const ORIGIN_B: Record<string, [string, string]> = { planned: ['előjegyzett', 'b-blue'], added: ['hozzáadva', 'b-yellow'], manual: ['', ''] }
 const byDay = computed(() => {
   const m: Record<string, typeof recs.value> = {}
-  recs.value.forEach(r => { (m[r.date] = m[r.date] || []).push(r) })
+  filtered.value.forEach(r => { (m[r.date] = m[r.date] || []).push(r) })
   return Object.keys(m).sort().reverse().map(d => ({ d, list: m[d]!.sort((a, b) => a.time.localeCompare(b.time)) }))
 })
 const upcoming = computed(() => patients.upcoming(id.value))
@@ -119,7 +138,7 @@ const statusSummary = (teeth: Record<string, string[]>) => {
           <div>Kontroll</div>
           <div><template v-if="recall">{{ recall.typeName }}: <b :style="recall.due <= today() ? 'color:var(--red)' : ''">{{ fmtDate(recall.due) }}</b><span v-if="recall.due <= today()" class="badge b-red" style="margin-left:4px">esedékes</span></template><span v-else class="muted">–</span></div>
           <div>Következő időpont</div>
-          <div><template v-if="upcoming.length"><div v-for="a in upcoming.slice(0, 3)" :key="a.id">{{ fmtDate(a.date) }} {{ a.start }} · {{ doctorName(db, a.doctorId) }} · {{ typeNames(db, a.typeIds) }}<span v-if="a.buffer" class="badge b-buf" style="margin-left:4px">+{{ a.buffer }}'</span></div></template><span v-else>–</span></div>
+          <div><template v-if="upcoming.length"><div v-for="a in upcoming.slice(0, 3)" :key="a.id" style="cursor:pointer;color:var(--blue-d)" title="Megnyitás a Kezelések között" @click="ui.open(AppointmentModal, { id: a.id })">{{ fmtDate(a.date) }} {{ a.start }} · {{ doctorName(db, a.doctorId) }} · {{ typeNames(db, a.typeIds) }}<span v-if="a.buffer" class="badge b-buf" style="margin-left:4px">+{{ a.buffer }}'</span></div></template><span v-else>–</span></div>
         </div>
       </div>
       <div class="card">
@@ -151,8 +170,37 @@ const statusSummary = (teeth: Record<string, string[]>) => {
       </div>
     </div>
 
-    <div class="card">
-      <h2>Kezelések</h2>
+    <div class="card" id="kezelesek">
+      <div class="row" style="margin-bottom:6px"><h2 style="margin:0">Kezelések</h2><div class="spacer" /><button class="btn pri sm" @click="ui.open(BookingModal, { patientId: p.id })"><AppIcon name="plus" :size="14" />Új időpont / kezelés előjegyzése</button></div>
+      <h3>Következő kezelések</h3>
+      <div v-for="a in upcoming" :key="a.id" class="rec" style="cursor:pointer" @click="ui.open(AppointmentModal, { id: a.id })">
+        <div class="row">
+          <b>{{ fmtDate(a.date) }} {{ a.start }}</b><span>{{ doctorName(db, a.doctorId) }}</span><span class="badge b-blue">előjegyzett</span>
+          <span v-if="a.cancelSignal" class="badge b-red">lemondást jelzett</span>
+          <div class="spacer" /><span class="muted small">becsült díj: {{ fmtFt(apptPrice(db, a)) }}</span>
+          <button class="btn sm" @click.stop="ui.open(BookingModal, { editId: a.id })">Szerkesztés</button>
+        </div>
+        <div class="small" style="margin-top:4px">{{ plannedLine(a) }}</div>
+      </div>
+      <div v-for="g in pending" :key="g.id" class="rec" style="cursor:pointer;border-left:3px solid var(--orange)" @click="ui.open(SuggestionModal, { id: g.id })">
+        <div class="row">
+          <b>{{ tname(g.typeId) }}{{ g.tooth ? ' · ' + g.tooth + '-es fog' : '' }}</b><span class="badge" :class="URGENCY[g.urgency].cls">{{ URGENCY[g.urgency].label }}</span>
+          <span class="badge" :class="SUG_STATUS[g.status].cls">{{ SUG_STATUS[g.status].label }}</span>
+          <span v-if="g.due" class="small" :style="isOverdue(g) ? 'color:var(--red);font-weight:700' : ''">határidő: {{ fmtDate(g.due) }}</span>
+          <div class="spacer" /><span class="muted small">becsült díj: {{ fmtFt(sugFee(db, g)) }}</span>
+          <button class="btn sm go" @click.stop="ui.open(BookingModal, { suggestionIds: [g.id] })">Időpont</button>
+        </div>
+        <div class="small muted" style="margin-top:2px">javasolt kezelés – még nincs időpont{{ g.note ? ' · ' + g.note : '' }}</div>
+      </div>
+      <p v-if="!upcoming.length && !pending.length" class="muted small" style="margin-top:0">Nincs előjegyzett vagy javasolt kezelés.</p>
+      <div v-if="pending.length" class="small muted" style="margin:0 0 8px">Javasolt, még be nem ütemezett kezelések becsült díja összesen: <b>{{ fmtFt(sugTotal(db, pending)) }}</b></div>
+      <h3 style="margin-top:16px">Korábbi kezelések</h3>
+      <div class="row" style="margin-bottom:10px">
+        <input v-model="fText" class="inp" style="max-width:200px" placeholder="Keresés a leírásban…">
+        <select v-model="fType" class="inp auto"><option value="">minden kezelés</option><option v-for="t in db.types" :key="t.id" :value="t.id">{{ t.name }}</option></select>
+        <select v-model="fDoc" class="inp auto"><option value="">minden orvos</option><option v-for="d in db.doctors" :key="d.id" :value="d.id">{{ d.name }}</option></select>
+        <input v-model="fFrom" class="inp auto" type="date" title="-tól"><input v-model="fTo" class="inp auto" type="date" title="-ig">
+      </div>
       <template v-if="byDay.length">
         <div v-for="g in byDay" :key="g.d" class="day-grp">
           <div class="dh">{{ fmtLong(g.d) }} <span class="muted small" style="font-weight:500">{{ g.list.length }} kezelés</span><div class="spacer" />
@@ -168,6 +216,11 @@ const statusSummary = (teeth: Record<string, string[]>) => {
               <span v-if="r.fee" class="muted small">{{ fmtFt(r.fee) }}</span>
               <button class="btn sm" @click="edit(r.id)">Szerkesztés</button>
             </div>
+            <div v-if="r.items?.length" class="small" style="margin-top:6px">
+              <span v-for="i in r.items" :key="i.id" class="tchip" :style="i.state === 'postponed' ? 'opacity:.55;text-decoration:line-through' : ''" :title="i.state === 'postponed' ? 'elhalasztva' : ''">
+                {{ i.tooth ? i.tooth + ': ' : '' }}{{ tname(i.typeId) }}<template v-if="ORIGIN_B[i.origin]![0]"> · {{ ORIGIN_B[i.origin]![0] }}</template><template v-if="i.fee && i.state === 'done'"> · {{ fmtFt(i.fee) }}</template>
+              </span>
+            </div>
             <div v-if="r.planned?.teeth.length" class="small muted" style="margin-top:4px">Tervezett: {{ teethStr(r.planned.teeth, r.planned.surfaces) }} · kezelt: {{ teethStr(r.teeth, r.surfaces) }}</div>
             <p>{{ r.text || '(nincs leírás)' }}</p>
             <div class="row small" style="margin:6px 0 2px;gap:6px">
@@ -178,6 +231,7 @@ const statusSummary = (teeth: Record<string, string[]>) => {
               <span v-if="r.materials.some(m => m.cost)" class="muted">anyagköltség: {{ fmtFt(r.materials.reduce((s, m) => s + (m.cost || 0), 0)) }}</span>
             </div>
             <div v-if="lotsLine(r)" class="small muted">LOT: {{ lotsLine(r) }}</div>
+            <div v-if="r.editLog?.length" class="small muted">Utólag módosítva: {{ r.editLog.map(e => e.at + (e.by ? ' · ' + e.by : '')).join('; ') }}</div>
             <div class="mats">Felhasznált anyagok: {{ r.materials.length ? r.materials.map(m => `${db.items.find(i => i.id === m.item)?.name || '?'} ${m.qty} ${db.items.find(i => i.id === m.item)?.unit || ''}`).join(' · ') : '–' }}</div>
             <div v-if="attsOf(r.id).length" class="att-list">
               <AttachmentCard v-for="a in attsOf(r.id)" :key="a.id" :a="a" @open="ui.open(AttachmentViewer, { id: a.id })" />

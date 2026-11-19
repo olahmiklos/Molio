@@ -11,16 +11,18 @@ const inv = useInventoryStore()
 const ui = useUiStore()
 const it = computed(() => inv.itemById(props.id)!)
 const f = computed(() => inv.forecast(it.value))
-const form = ref({ name: it.value.name, group: it.value.group, unit: it.value.unit, supplier: it.value.supplier, target: it.value.target, lead: it.value.lead, kw: it.value.kw.join(', '), lotTracked: !!it.value.lotTracked, implant: !!it.value.implant })
+const form = ref({ name: it.value.name, group: it.value.group, unit: it.value.unit, supplier: it.value.supplier, target: it.value.target, lead: it.value.lead, kw: it.value.kw.join(', '), lotTracked: !!it.value.lotTracked, implant: !!it.value.implant, safeMode: (it.value.safety?.mode || 'qty') as 'qty' | 'weeks', safeVal: it.value.safety?.value || 0 })
 const lots = computed(() => inv.lots(it.value.id))
 const untracked = computed(() => inv.untracked(it.value))
 const days = (d: string) => dayDiff(today(), d)
+import { ORDER_ST } from '~/utils/stock'
 const kind: Record<string, string> = { use: 'Felhasználás', in: 'Bevételezés', corr: 'Korrekció' }
 const pname = (id?: string) => (id ? data.db.patients.find(p => p.id === id)?.name || '' : '')
 function save() {
   const v = form.value, i = it.value
   i.name = v.name.trim() || i.name; i.unit = v.unit.trim() || i.unit; i.group = v.group.trim() || i.group; i.supplier = v.supplier.trim()
   i.lotTracked = v.lotTracked; i.implant = v.implant; i.target = Math.max(1, Number(v.target) || i.target); i.lead = Math.max(0, Number(v.lead) || 0); i.kw = parseKw(v.kw)
+  i.safety = Number(v.safeVal) > 0 ? { mode: v.safeMode, value: Number(v.safeVal) } : null
   ui.close(); ui.toast('Anyag mentve')
 }
 </script>
@@ -62,6 +64,9 @@ function save() {
       <div class="field"><label class="f">Átlagos beszerzési ár</label><input class="inp" :value="fmtPrice(it.price)" disabled title="Bevételezéskor számolódik (gördülő súlyozott átlag)"></div>
       <div class="field"><label class="f">Célkészlet</label><input v-model.number="form.target" class="inp" type="number"></div>
       <div class="field"><label class="f">Beszerzési idő (nap)</label><input v-model.number="form.lead" class="inp" type="number"></div>
+      <div class="field"><label class="f">Biztonsági tartalék</label>
+        <div class="row" style="flex-wrap:nowrap"><input v-model.number="form.safeVal" class="inp" type="number" min="0" style="width:90px"><select v-model="form.safeMode" class="inp auto"><option value="qty">{{ it.unit }}</option><option value="weeks">hét fogyása</option></select></div>
+        <div class="small muted">ennyit „nem használ el” a számítás: a rendelési határidő előbbre kerül</div></div>
       <div class="field" style="grid-column:1 / -1">
         <label class="switch" :class="{ on: form.lotTracked }" @click.prevent="form.lotTracked = !form.lotTracked"><i />gyártási szám (LOT) és lejárat kötelező a bevételezéskor</label>
         <label class="switch" :class="{ on: form.implant }" style="margin-left:14px" @click.prevent="form.implant = !form.implant; form.lotTracked = form.lotTracked || form.implant"><i />implantátum (a LOT a páciens kartonjába kerül)</label>
@@ -71,6 +76,16 @@ function save() {
     <datalist id="dl-groups"><option v-for="g in inv.groups" :key="g" :value="g" /></datalist>
     <datalist id="dl-sup"><option v-for="s in inv.suppliers" :key="s" :value="s" /></datalist>
     <div class="row"><div class="spacer" /><button class="btn pri sm" @click="save">Beállítások mentése</button></div>
+    <h3 style="margin-top:14px">Megrendelések előzménye</h3>
+    <div v-if="inv.ordersOf(it.id).length" class="small" style="margin-bottom:8px">
+      <div v-for="o in inv.ordersOf(it.id)" :key="o.id" class="row" style="padding:3px 0;border-bottom:1px solid #eef1f3">
+        <b>{{ fmtDate(o.date) }}</b><span>{{ o.supplier }}</span><span>{{ o.lines.find(l => l.item === it.id)?.qty }} {{ it.unit }}</span>
+        <span class="badge" :class="ORDER_ST[o.status]![1]">{{ ORDER_ST[o.status]![0] }}</span>
+        <span v-if="o.expected && (o.status === 'ordered' || o.status === 'partial')" class="muted">várható: {{ fmtDate(o.expected) }}</span>
+        <span v-if="o.cancelReason" class="muted">indok: {{ o.cancelReason }}</span>
+      </div>
+    </div>
+    <p v-else class="muted small" style="margin-top:0">Ehhez az anyaghoz még nem rögzítettek megrendelést.</p>
     <h3 style="margin-top:14px">Mozgásnapló</h3>
     <div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px">
       <table class="t">

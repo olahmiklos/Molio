@@ -17,7 +17,14 @@ const n = computed(() => db.value.settings.notify)
 const ri = computed(() => remindInfo(a.value))
 const sms = computed(() => fillTpl(db.value, n.value.smsTpl, a.value))
 function send() { ap.sendNow(props.id); ui.close(); ui.toast('Emlékeztető elküldve (demó – ténylegesen nem ment ki)') }
-function confirmIt() { ap.toggleConfirm(props.id); ui.toast(a.value.confirmed ? 'Visszaigazolva – a kockázat csökkent' : 'Visszaigazolás törölve') }
+/** a páciens válasza (szimulált): csak a „NEM” jellegű válasz jelez, az „igen”/hallgatás nem igényel teendőt (9. pont) */
+const reply = ref('')
+function simulate() {
+  if (!reply.value.trim()) return
+  const r = ap.simulateReply(props.id, reply.value)
+  ui.toast(r === 'cancel' ? 'Lemondást jelzett – az asszisztens értesítve' : 'Üzenet rögzítve, nincs teendő')
+  reply.value = ''
+}
 </script>
 
 <template>
@@ -33,8 +40,13 @@ function confirmIt() { ap.toggleConfirm(props.id); ui.toast(a.value.confirmed ? 
       <div v-if="a.remind.email"><label class="f">✉ E-mail – {{ p.email }}</label><div class="mail"><b>{{ fillTpl(db, n.mailSubj, a) }}</b><hr><span style="white-space:pre-line">{{ fillTpl(db, n.mailTpl, a) }}</span></div></div>
       <div v-else class="muted">E-mailt nem kér.</div>
     </div>
+    <div class="hint" style="margin-top:12px">
+      <b>Válasz szimulálása (demó).</b> Az üzenet arra kéri a pácienst, hogy csak akkor válaszoljon <b>NEM</b>-mel, ha nem tud eljönni; a megerősítést nem kérjük.
+      Írd be egy válasz szövegét (pl. „nem”, „Nem tudok”, „sajnos nem megyek”):
+      <div class="row" style="margin-top:6px"><input v-model="reply" class="inp" style="max-width:320px" placeholder="Páciens válasza" @keyup.enter="simulate"><button class="btn sm" @click="simulate">Válasz szimulálása</button></div>
+      <div v-if="a.cancelSignal" class="warn" style="margin-top:8px">Lemondást jelzett: „{{ a.cancelSignal.text }}” – az asszisztens dönt (időpont lemondása vagy visszahívás). <button class="btn sm" @click="ap.clearSignal(a.id)">Jelzés törlése</button></div>
+    </div>
     <template #foot>
-      <button class="btn" @click="confirmIt">{{ a.confirmed ? 'Visszaigazolás törlése' : '✓ Visszaigazolta' }}</button>
       <div class="spacer" />
       <button class="btn" @click="ui.close()">Bezárás</button>
       <button class="btn pri" @click="send">Küldés most (demó)</button>

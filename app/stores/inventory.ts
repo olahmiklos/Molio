@@ -5,7 +5,7 @@ import { addDays, dayDiff, dow, today, uid } from '~/utils/dates'
 import type { Item, TreatmentType } from '~/utils/types'
 import { attention, forecastItem, futureAppts, pkgFor, surfacesFor } from '~/utils/logic'
 import { SITE_ID } from '~/utils/defaults'
-import { expiryRows, lotSearch, lotsOf, orderSuggestions, receiveStock, untrackedQty, weightedAvg, type ReceiveInput } from '~/utils/stock'
+import { applyReceiptToOrder, expiryRows, lotSearch, lotsOf, orderSuggestions, receiveStock, untrackedQty, weightedAvg, type ReceiveInput } from '~/utils/stock'
 
 export const useInventoryStore = defineStore('inventory', () => {
   const data = useDataStore()
@@ -28,9 +28,12 @@ export const useInventoryStore = defineStore('inventory', () => {
   const movementsOf = (id: string) => db.value.movements.filter(m => m.item === id).sort((a, b) => b.date.localeCompare(a.date))
 
   /** bevételezés egységárral (gördülő átlagár), gyártási számmal és lejárattal */
-  function receive(itemId: string, inp: ReceiveInput) {
+  function receive(itemId: string, inp: ReceiveInput, orderId?: string | null) {
     const it = itemById(itemId); if (!it || !(inp.qty > 0)) return null
-    return receiveStock(db.value, it, inp)
+    const mv = receiveStock(db.value, it, inp)
+    // a bevételezés a kiválasztott megrendeléshez kapcsolódik: teljes beérkezésnél lezárul, részlegesnél nyitva marad (11. pont)
+    if (orderId) applyReceiptToOrder(db.value, orderId, itemId, inp.qty, inp.date || today())
+    return mv
   }
   const previewAvg = (it: Item, qty: number, unitPrice: number) => weightedAvg(it.stock, it.price, qty, unitPrice)
   function addItem(it: Omit<Item, 'id' | 'siteId' | 'generic'>, lot?: { lot: string; expiry: string }) {
@@ -46,14 +49,29 @@ export const useInventoryStore = defineStore('inventory', () => {
   const untracked = (it: Item) => untrackedQty(db.value, it)
   const expiring = computed(() => expiryRows(db.value, 90))
   const suggestions = computed(() => orderSuggestions(db.value))
-  const openOrders = computed(() => db.value.orders.filter(o => o.status === 'ordered').sort((a, b) => b.date.localeCompare(a.date)))
+  /** a leadott, még be nem érkezett (vagy részben beérkezett) megrendelések */
+  const openOrders = computed(() => db.value.orders.filter(o => o.status === 'ordered' || o.status === 'partial').sort((a, b) => b.date.localeCompare(a.date)))
+  /** az összes megrendelés előzménye, legfrissebb elöl */
+  const allOrders = computed(() => db.value.orders.slice().sort((a, b) => b.date.localeCompare(a.date)))
+  const ordersOf = (itemId: string) => allOrders.value.filter(o => o.lines.some(l => l.item === itemId))
   const searchLot = (q: string) => lotSearch(db.value, q)
-  /** a munkatárs jelzi, hogy leadta a rendelést (a program maga nem rendel) */
-  function markOrdered(supplier: string, lines: { item: string; qty: number }[], orderedBy: string, note: string) {
-    const o = { id: uid(), date: today(), supplier, lines: lines.filter(l => l.qty > 0), orderedBy, status: 'ordered' as const, note }
+  /** a munkatárs jelzi, hogy leadta a rendelést (a program maga nem rendel); a várható beérkezés = dátum + a leghosszabb beszerzési idő */
+  function placeOrder(supplier: string, lines: { item: string; qty: number }[], orderedBy: string, note: string, opts: { ref?: string; expected?: string } = {}) {
+    const ls = lines.filter(l => l.qty > 0).map(l => ({ ...l, received: 0 }))
+    const lead = Math.max(0, ...ls.map(l => itemById(l.item)?.lead || 0))
+    const o = { id: uid(), date: today(), supplier, lines: ls, orderedBy, status: 'ordered' as const, note, ref: opts.ref || '', expected: opts.expected || addDays(today(), lead) }
     db.value.orders.push(o); return o
   }
-  function closeOrder(id: string) { const o = db.value.orders.find(x => x.id === id); if (o) o.status = 'received' }
+  const markOrdered = placeOrder
+  /** egy anyag gyors megrendelése a Készlet listáról */
+  function quickOrder(itemId: string, qty: number, orderedBy: string, note = '') {
+    const it = itemById(itemId); if (!it) return null
+    return placeOrder(it.supplier || 'Nincs beszállító', [{ item: itemId, qty }], orderedBy, note)
+  }
+  /** visszavonás: a rendelés nem érvényes, a javaslat visszatér */
+  function cancelOrder(id: string, reason: string) { const o = db.value.orders.find(x => x.id === id); if (o) { o.status = 'cancelled'; o.cancelReason = reason } }
+  /** kézi lezárás (pl. a beszállító a maradékot nem szállítja) */
+  function closeOrderManual(id: string, note: string) { const o = db.value.orders.find(x => x.id === id); if (o) { o.status = 'closed'; o.closedNote = note; o.receivedDate = today() } }
   /** a még nem használt anyag törölhető */
   function deleteItemCheck(id: string): string | null {
     const used = db.value.types.filter(t => t.mats.some(m => m.item === id)).map(t => t.name)
@@ -92,5 +110,5 @@ export const useInventoryStore = defineStore('inventory', () => {
     return { weeks, w0 }
   }
 
-  return { itemById, typeById, groups, suppliers, alerts, forecast, rows, stockValue, movementsOf, receive, previewAvg, addItem, lots, untracked, expiring, suggestions, openOrders, searchLot, markOrdered, closeOrder, deleteItemCheck, deleteItem, addType, deleteTypeCheck, deleteType, pkgCost, weekly }
+  return { itemById, typeById, groups, suppliers, alerts, forecast, rows, stockValue, movementsOf, receive, previewAvg, addItem, lots, untracked, expiring, suggestions, openOrders, allOrders, ordersOf, searchLot, markOrdered, placeOrder, quickOrder, cancelOrder, closeOrderManual, deleteItemCheck, deleteItem, addType, deleteTypeCheck, deleteType, pkgCost, weekly }
 })
