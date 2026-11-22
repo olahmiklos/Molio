@@ -40,6 +40,8 @@ A naptár a két orvos időpontjait mutatja napi, heti és havi nézetben. Minde
 1. Kattints egy szabad sávra a naptárban, vagy a páciens kartonján az **Időpont foglalása** gombra.
 2. Válaszd ki a pácienst, az orvost és a kezelést. Tömésnél megadhatod a tervezett fogat és felszínt is – ez a kezelés indításakor automatikusan átkerül.
 3. Állítsd be az emlékeztetőt (SMS, e-mail, időzítés). A páciens választását a program megjegyzi.
+4. **Időtartam (v2.3):** a foglalás hossza a kiválasztott kezelés(ek) ideje (pl. gyökérkezelés: 90 perc); a ráhagyás ezen felül, a kezelés után adódik hozzá. Az ablak összesítő sora mutatja a számítást. Kézzel rövidebb idő is megadható (a program figyelmeztet, de engedi), a **Vissza a kezelés szerinti időre** gomb visszaállítja.
+5. **Közeli időpont (v2.3):** ha a páciensnek bármelyik orvosnál 7 napon belül már van időpontja, a dátum mellett kiemelt jelzés látszik, a szabad időpontok között a meglévő időpont napja is kiemelve. Mentéskor felugró ablak kérdezi: **hozzáadod a meglévő időponthoz** (az időtartam megnő), **visszalépsz**, vagy **foglalsz az új időpontra**.
 
 ## Figyelmeztetések a páciens meglévő időpontjairól (v2.2)
 
@@ -101,6 +103,17 @@ A program felismeri:
 - a **felszíneket**: meziális, disztális, okkluzális (rágófelszín), vesztibuláris, lingvális/palatinális, valamint a rövidítéseket (MOD, MO, DO);
 - a **kezelés típusát** (tömés, gyökérkezelés, foghúzás, implantátum…);
 - az **anyagokat és mennyiségeket** („két ampulla”, „kérek öt tampont”).
+
+### Pontosabb diktálás (v2.3)
+
+- **Felismerő:** a diktálás alapból a **pontos felismerést** (Whisper, szerveroldali) használja szakszó-listával; beszéd közben a böngésző **élő előnézetet** ad, és ha a pontos felismerés nem érhető el, az **alap felismerés** a tartalék (erről jelzés látszik). Egy felvétel legfeljebb 30 másodperces.
+- **Felvétel- és hangerőjelző:** a diktálás alatt látszik a felvétel, a hátralévő idő és a hangerő; halk, túl hangos vagy hiányzó hang esetén tanács jelenik meg.
+- **Zajszűrés:** a Beállítások → Diktálás lapon kapcsolható (mélyzaj-szűrés, hangerő-kiegyenlítés).
+- **Szótár és hasonlóság:** a köznyelvi kifejezéseket („harminc hatos”, „polír pasta”) a program a hivatalos elnevezésre alakítja; ha egy szó csak hasonlít egy ismert kifejezésre, **⚠** jelzéssel rákérdez.
+- **Ellenőrzés:** a program összeveti a diktálást az előjegyzett kezeléssel és a fogtérképpel (pl. tömés hiányzó fogon), a kétértelmű mennyiségeknél („három hatos injekció”: 3 db a 6-osból, vagy 3,6) rákérdez; a ⚠ sorokat mentés előtt egyenként meg kell erősíteni.
+- **Nem ezt mondtam:** az előnézetben jelezheted, ha a program rosszul hallott vagy rosszul értelmezett; a jelzés a **javítási naplóba** kerül (csak szöveg, betegadat nélkül), és segíti a szabályok tanulását.
+- **AI-értelmezés (kísérleti):** a diktálás sávjában kapcsolóval bekapcsolható; eltérésnél ⚠ jelzi, melyik értelmezést választod.
+- **Diktálás betanítása:** a Beállítások → Diktálás betanítása lapon felolvasható szakaszokból (kb. 2 perc) a program megméri a pontosságot ezen az eszközön, és személyes javításokat javasol, amelyeket egyenként jóváhagyhatsz. Az eredmény csak ezen az eszközön érvényes.
 
 A teljes szöveg kezelési jegyzetként megmarad, és bármikor javítható. Ha nincs beszédfelismerés, a szöveg begépelhető, vagy a **Minta diktálás beszúrása** listából kipróbálható.
 
@@ -242,15 +255,20 @@ A páciens kartonján a nap fejlécében lévő **Számla előkészítése** gom
 
 # Beállítások
 
-A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („Demó v2.2 – a specifikáció v2.2 alapján készült”), a build idejét és a kódazonosítót, itt van a **Frissítés keresése** gomb és a másolható verzióadat (hibabejelentéshez). A teszt- és a demókörnyezetet jelölés különbözteti meg.
+A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („Demó v2.3 – a specifikáció v2.3 alapján készült”), a build idejét és a kódazonosítót, a használt felismerőt és AI-modellt, a diktálás-értelmezés pontossági mérését (tesztkészlet, az előző kiadáshoz képest), itt van a **Frissítés keresése** gomb és a másolható verzióadat (hibabejelentéshez). A teszt- és a demókörnyezetet jelölés különbözteti meg.
 
 - **Klinika:** név, cím, telefon, rendelési idő, a tejfogazat javaslatának korhatára, a ráhagyás hossza, a mintaadatok visszaállítása.
 - **Értesítések:** az alapértelmezett emlékeztető és az SMS-, e-mail-sablonok előnézettel.
-- **Kezelési csomagok:** kezeléstípusonként az alapidő, a ráhagyás, a díj (tömésnél felszínszám szerint), a kontroll-meghívó időköze, a beleegyező nyilatkozat sablonja, a szín, a diktálási kulcsszavak és az anyagcsomag (alkalmanként, foganként vagy felszínenként). Itt bővíthető a fogazati státusz felismerési szótára is.
+- **Kezelési csomagok:** kezeléstípusonként az alapidő, a ráhagyás, a díj (tömésnél felszínszám szerint), a kontroll-meghívó időköze, a beleegyező nyilatkozat sablonja, a szín, a diktálási kulcsszavak és az anyagcsomag (alkalmanként, foganként vagy felszínenként). 
+- **Diktálás (v2.3):** felismerő-választó (pontos / alap), élő előnézet, zajszűrés, hasonlósági érzékenység, AI-értelmezés kapcsoló, az AI hozzáadott értéke és az „Így diktálj” súgó.
+- **Diktálás betanítása (v2.3):** hangpróba szakaszonként, pontosság kategóriánként, személyes javítások javaslata, előzmények.
+- **Kódtáblák és szinonimák:** szinonimatábla, kódtáblák, a **fogazati státusz felismerési szótára** (korábban a Kezelési csomagoknál), a diktálási **alapszótár**, **személyes javítások**, kitaláció-szűrő, **ismeretlen kifejezések** (egy lépésben hozzárendelhetők), összeférhetőségi szabályok, tanult szabályok és a javítási napló.
 - **Anyag-törzsadatok:** anyagcsoportok és anyagok, beszállító, beszerzési idő, átlagár, célkészlet.
 - **Kapcsolatok:** az EESZT, a számlázó program és a mesterséges intelligencia bekötésének leírása (a demóban szemléltetés).
 
 # Gyakori kérdések
+
+**Mi az az „Új verzió érhető el” ablak? (v2.3)** A nyilvános (main) demón új kiadáskor felugró ablak jelzi az új verziót; az **OK** gomb után az oldal újratöltődik. A folyamatban lévő diktálást előtte piszkozatba mentjük, újratöltés után felajánljuk a folytatást.
 
 **Miért nem látom a másik gépen rögzített adatot?** A demó az adatokat csak abban a böngészőben tárolja, ahol rögzítetted. A végleges rendszerben az adatok központi adatbázisban lesznek.
 
@@ -263,6 +281,16 @@ A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („De
 **Hogyan kezdhetem elölről a kipróbálást?** Beállítások → Klinika → Visszaállítás alaphelyzetbe.
 
 # Verziótörténet
+
+## 2.3
+
+- Pontosabb diktálás: szerveroldali Whisper-felismerés szakszó-listával, élő előnézet, felvétel- és hangerőjelző, zajszűrés, kitaláció-szűrő, tartalék felismerő.
+- Diktálási alapszótár, ismeretlen kifejezések gyűjtése, hasonlóság szerinti egyeztetés, ellenőrzés az előjegyzett kezeléssel és a fogtérképpel.
+- Javítási napló, „Nem ezt mondtam” jelzés, tanuló szabályok; Diktálás betanítása és személyes javítások; kísérleti AI-értelmezés.
+- A fogazati státusz felismerési szótára a Kódtáblák és szinonimák alatt; kiszerelés-változatok az anyagoknál.
+- Csatornaválasztó gombok a tájékoztató- és emlékeztető-küldésben (SMS / e-mail).
+- Foglalás: az időtartam a kezelés hossza (ráhagyás pluszban), figyelmeztetés és megerősítő ablak 7 napon belüli másik időpontnál.
+- Új verzió felugró ablak a main ágon, piszkozatmentéssel.
 
 ## 2.2
 
