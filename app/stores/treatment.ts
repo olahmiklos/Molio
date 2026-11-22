@@ -14,6 +14,13 @@ import { useRepository } from '~/repositories'
 import { consumeStock, previewLots, returnStock } from '~/utils/stock'
 import { patientInfoDraft, usableBatches } from '~/utils/office'
 import { draftExpiry, liveDrafts } from '~/utils/v22'
+import { preprocess, type DictFlag, type PipeResult } from '~/utils/dict/pipeline'
+import { buildVocab } from '~/utils/dict/vocab'
+import { reviewFlags, type PairLite } from '~/utils/dict/review'
+import { buildPrompt } from '~/utils/dict/prompt'
+import { DEFAULT_HALLU as DEFAULT_HALLU_LIST } from '~/utils/dict/filters'
+import { useDictStore } from './dict'
+import type { DictResult } from './voice'
 
 export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual'
 export interface MatRow { id: string; pk: number; dq?: number; dRel?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean }
@@ -58,6 +65,12 @@ interface Session {
   confirmedConf: string[]
   /** a ⚠ jelölésű anyagsorok, amelyeket az orvos / asszisztens megerősített (spec v2.2, 4. pont) */
   confirmedRows: string[]
+  /** v2.3: a ⚠ sorok választásai (szó-egyeztetés, kétértelmű szó), a megoldott jelzések, fogcserék, a diktálás adatai és az AI-értelmezés */
+  picks: Record<string, string>
+  resolved: Record<string, string>
+  toothSub: Record<number, number>
+  dict: { recognizer: string; live: string; seconds: number; differs: boolean; fallback: boolean; noSpeech: boolean; noted: string[] }
+  ai: { state: 'idle' | 'run' | 'done' | 'err'; model: string; items: { tooth: number | null; typeId: string; status: string }[]; materials: { item: string; qty: number }[]; error: string }
 }
 
 export type SItemState = 'done' | 'postponed' | 'suggested'
@@ -86,7 +99,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const dentition = computed(() => patient.value?.dentition || 'permanent')
 
   function base(o: Partial<Session> & { patientId: string; doctorId: string; date: string; time: string }): Session {
-    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], confirmedRows: [], ...o }
+    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], confirmedRows: [], picks: {}, resolved: {}, toothSub: {}, dict: { recognizer: 'kézi', live: '', seconds: 0, differs: false, fallback: false, noSpeech: false, noted: [] }, ai: { state: 'idle', model: '', items: [], materials: [], error: '' }, ...o }
   }
   const nowSlot = () => fromMin(Math.min(Math.max(Math.floor(nowMin() / 30) * 30, db.value.settings.startHour * 60), db.value.settings.endHour * 60 - 30))
 
@@ -156,13 +169,30 @@ export const useTreatmentStore = defineStore('treatment', () => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => { applyParse(); saveDraft() }, delay)
   }
-  /** a diktálás végén azonnali feldolgozás: az előnézet azonnal elkészül, nem vár a késleltetésre */
-  function finishDictation() { if (timer) clearTimeout(timer); applyParse(); saveDraft() }
+  /** a diktálás végén azonnali feldolgozás: az előnézet azonnal elkészül, nem vár a késleltetésre; a felismerő adatai a naplóhoz és a megjelenítéshez */
+  function finishDictation(info?: DictResult) {
+    const x = s.value
+    if (x && info) x.dict = { ...x.dict, recognizer: info.recognizer === 'whisper' ? 'Whisper' : info.recognizer === 'browser' ? 'böngésző' : 'nincs', live: info.live || '', seconds: info.seconds, differs: info.differs, fallback: info.fallback, noSpeech: info.noSpeech }
+    if (timer) clearTimeout(timer); applyParse(); saveDraft()
+    if (x) {
+      const key = x.text.trim()
+      if (key && !x.dict.noted.includes(key)) { x.dict.noted.push(key); useDictStore().noteUnknown(pipe.value.unknown, x.text) }
+      void runAi()
+    }
+  }
+  /* ---------- a szövegfeldolgozási lánc (spec v2.3) ---------- */
+  const dictStore = () => { const d = useDictStore(); d.init(); return d }
+  const vocab = computed(() => buildVocab({ items: db.value.items, types: db.value.types, statusDict: db.value.settings.statusDict }))
+  const pipe = ref<PipeResult>({ raw: '', text: '', cleaned: '', steps: [], flags: [], filteredOut: [], unknown: [] })
   function applyParse() {
     if (!s.value) return
     const x = s.value
-    parsed.value = analyze(x.text, db.value, { dentition: dentition.value })
-    itemParse.value = analyzeItems(x.text, db.value)
+    const d = dictStore()
+    // kitaláció-szűrő: a bővítések a kódtáblák között szerkeszthetők
+    pipe.value = preprocess(x.text, { personal: d.s.personal, filterList: d.s.extraFilter.length ? [...DEFAULT_HALLU_LIST, ...d.s.extraFilter] : undefined, vocab: vocab.value, threshold: d.s.prefs.threshold, picks: x.picks, seconds: x.dict.seconds || undefined })
+    const ptext = pipe.value.text
+    parsed.value = analyze(ptext, db.value, { dentition: dentition.value })
+    itemParse.value = analyzeItems(ptext, db.value)
     const ip = itemParse.value
     // a csak javaslatként említett fog és művelet nem elvégzett kezelés (12. pont)
     if (ip.suggested.length) {
@@ -170,19 +200,28 @@ export const useTreatmentStore = defineStore('treatment', () => {
       parsed.value.types = parsed.value.types.filter(t => ip.doneTypes.includes(t))
     }
     // fogállapot-változás a diktálásból (4. pont): csak a kimondott fogakra
-    dictStatus.value = analyzeStatus(x.text, db.value.settings.statusDict, dentition.value, { explicitOnly: true }).teeth
+    dictStatus.value = analyzeStatus(ptext, db.value.settings.statusDict, dentition.value, { explicitOnly: true }).teeth
     // a csak állapotként említett fog (pl. „16-os hiányzik”) nem kezelt fog
     const doneTeeth = new Set(ip.done.map(d => d.tooth))
     const statusOnly = Object.keys(dictStatus.value).map(Number).filter(n => !doneTeeth.has(n))
     parsed.value.teeth = parsed.value.teeth.filter(t => !statusOnly.includes(t))
+    // ⚠ jóváhagyott fogcsere (15. pont): a diktált fogszám helyett a választott fog
+    const sub = x.toothSub
+    if (Object.keys(sub).length) {
+      const m = (n: number) => sub[n] ?? n
+      parsed.value.teeth = [...new Set(parsed.value.teeth.map(m))].sort((a, b) => a - b)
+      const sf: SurfaceMap = {}; Object.entries(parsed.value.surfaces).forEach(([n, v]) => { sf[m(Number(n))] = v }); parsed.value.surfaces = sf
+      itemParse.value = { ...ip, done: ip.done.map(p => ({ ...p, tooth: p.tooth ? m(p.tooth) : p.tooth })), suggested: ip.suggested.map(p => ({ ...p, tooth: p.tooth ? m(p.tooth) : p.tooth })) }
+    }
     parsed.value.teeth.forEach(t => { if (!x.rmTeeth.includes(t) && !x.teeth.includes(t)) x.teeth.push(t) })
     parsed.value.types.forEach(t => { if (!x.rmTypes.includes(t) && !x.types.includes(t)) x.types.push(t) })
     if (parsed.value.teeth.length) x.focusTooth = parsed.value.teeth[parsed.value.teeth.length - 1]!
+    autoRules()
   }
   /** kézi felülbírálat: a levett fogat vagy kezelést újraértelmezéskor nem jelöli vissza */
   function toggleTooth(n: number) {
     const x = s.value; if (!x) return
-    if (x.teeth.includes(n)) { x.teeth = x.teeth.filter(t => t !== n); if (!x.rmTeeth.includes(n)) x.rmTeeth.push(n); if (x.focusTooth === n) x.focusTooth = x.teeth[0] ?? null }
+    if (x.teeth.includes(n)) { if (parsed.value.teeth.includes(n)) logCorrection('fog', `levett fog: ${n}`, `${n}`); x.teeth = x.teeth.filter(t => t !== n); if (!x.rmTeeth.includes(n)) x.rmTeeth.push(n); if (x.focusTooth === n) x.focusTooth = x.teeth[0] ?? null }
     else { x.teeth.push(n); x.rmTeeth = x.rmTeeth.filter(t => t !== n); x.focusTooth = n }
   }
   function focus(n: number) { if (s.value) s.value.focusTooth = n }
@@ -258,6 +297,8 @@ export const useTreatmentStore = defineStore('treatment', () => {
   function setItemState(key: string, st: 'done' | 'postponed') { const x = s.value; if (!x) return; if (st === 'done') delete x.itemState[key]; else x.itemState[key] = 'postponed' }
   function removeItem(key: string) {
     const x = s.value; if (!x) return
+    const gone = items.value.find(i => i.key === key)
+    if (gone && gone.origin !== 'planned') logCorrection('tetel', `törölt tétel: ${gone.tooth ?? '–'} ${db.value.types.find(t => t.id === gone.typeId)?.name || gone.typeId}`, key)
     if (!x.rmPairs.includes(key)) x.rmPairs.push(key)
     const it = items.value.find(i => i.key === key)
     if (it?.tooth && x.assign[it.tooth]) x.assign[it.tooth] = x.assign[it.tooth]!.filter(t => t !== it.typeId)
@@ -324,10 +365,135 @@ export const useTreatmentStore = defineStore('treatment', () => {
       return { id, pk, dq, dRel, st, auto, qty, manual: x.overrides[id] !== undefined && x.overrides[id] !== auto, checked: !x.unchecked.includes(id) }
     })
   })
-  const toReview = computed(() => s.value?.recordId ? 0 : rows.value.filter(r => r.checked && (r.st === 'diff' || r.st === 'dict') && !s.value?.confirmedRows.includes(r.id)).length)
+  const rowsReview = computed(() => s.value?.recordId ? 0 : rows.value.filter(r => r.checked && (r.st === 'diff' || r.st === 'dict') && !s.value?.confirmedRows.includes(r.id)).length)
+  const toReview = computed(() => rowsReview.value + pendingFlags.value.length)
+
+  /* ---------- ⚠ jelzések: egyetlen ellenőrzés a mentés előtt (spec v2.3, 5., 9., 10., 13., 15., 17. pont) ---------- */
+  const pl = (l: { tooth: number | null; typeId: string }[]): PairLite[] => l.map(p => ({ tooth: p.tooth, typeId: p.typeId }))
+  const reviewC = computed<DictFlag[]>(() => {
+    const x = s.value; if (!x || x.recordId) return []
+    const d = dictStore()
+    const plan = x.planItems
+    return reviewFlags({
+      text: pipe.value.text, done: pl(itemParse.value.done), planItems: pl(plan), finalItems: pl(doneItems.value),
+      status: patients.latestStatus(x.patientId)?.teeth || {}, types: db.value.types, catalog: db.value.items, qty: parsed.value.qty,
+      pkg: pkgForItems(db.value, doneItems.value), history: db.value.records.flatMap(r => r.materials.map(m => ({ item: m.item, qty: m.qty }))), compat: d.s.compat,
+    })
+  })
+  const aiFlags = computed<DictFlag[]>(() => {
+    const x = s.value; if (!x || x.ai.state !== 'done' || x.recordId) return []
+    const out: DictFlag[] = []
+    const k = (t: number | null, id: string) => `${t ?? 0}:${id}`
+    const lab = (t: number | null, id: string) => `${t ? t + '-es fog – ' : ''}${db.value.types.find(v => v.id === id)?.name || id}`
+    const ai = x.ai.items.filter(i => i.status === 'done'), rule = doneItems.value
+    const aiSet = new Set(ai.map(i => k(i.tooth, i.typeId))), ruleSet = new Set(rule.map(i => k(i.tooth, i.typeId)))
+    ai.forEach(i => { if (!ruleSet.has(k(i.tooth, i.typeId))) out.push({ key: 'ai:+' + k(i.tooth, i.typeId), kind: 'ai', title: `AI szerint: ${lab(i.tooth, i.typeId)}`, detail: 'A szabályalapú értelmezés ezt a tételt nem találta.', choices: [{ id: 'rule', label: 'Szabály szerint: nem szerepel' }, { id: 'ai', label: 'AI szerint: ' + lab(i.tooth, i.typeId) }], data: { tooth: i.tooth, typeId: i.typeId, add: true } }) })
+    if (ai.length) rule.forEach(i => { if (!aiSet.has(k(i.tooth, i.typeId)) && i.origin !== 'planned') out.push({ key: 'ai:-' + k(i.tooth, i.typeId), kind: 'ai', title: `Szabály szerint: ${lab(i.tooth, i.typeId)}`, detail: 'Az AI ezt a tételt nem találta.', choices: [{ id: 'rule', label: 'Szabály szerint: ' + lab(i.tooth, i.typeId) }, { id: 'ai', label: 'AI szerint: nem szerepel' }], data: { key: i.key, add: false } }) })
+    x.ai.materials.forEach(m => { const r = rows.value.find(v => v.id === m.item); const it = db.value.items.find(v => v.id === m.item); if (r && it && r.checked && Math.abs(r.qty - m.qty) > 1e-9 && x.overrides[m.item] === undefined) out.push({ key: 'ai:q:' + m.item, kind: 'ai', title: `${it.name.split(' ')[0]}: eltérő mennyiség`, choices: [{ id: 'rule', label: `Szabály szerint: ${r.qty} ${it.unit}` }, { id: 'ai', label: `AI szerint: ${m.qty} ${it.unit}` }], data: { item: m.item, qty: m.qty } }) })
+    return out
+  })
+  const flags = computed<DictFlag[]>(() => {
+    const seen = new Set<string>()
+    return [...pipe.value.flags, ...reviewC.value, ...aiFlags.value].filter(f => (seen.has(f.key) ? false : (seen.add(f.key), true)))
+  })
+  const pendingFlags = computed(() => flags.value.filter(f => !s.value?.resolved[f.key]))
+  function flagLog(f: DictFlag, choice: string, auto = false) {
+    const x = s.value; if (!x) return
+    const d = dictStore(), c = f.choices.find(v => v.id === choice)
+    const ai = f.kind === 'ai' ? { on: true, agree: false, picked: (choice === 'ai' ? 'ai' : 'szabaly') as 'ai' | 'szabaly' } : d.s.prefs.ai ? { on: true, agree: true } : undefined
+    let pattern: string | undefined, outcome: string | undefined
+    if (f.kind === 'similar') { pattern = 'sim:' + (f.data?.word as string); outcome = choice === '__none' ? undefined : choice }
+    else if (f.kind === 'qty' && f.data?.pattern) { pattern = f.data.pattern as string; outcome = choice === String(f.data.qty) ? 'szam' : 'tizedes' }
+    else if (f.kind === 'ambig') { pattern = 'amb:' + (f.data?.word as string); outcome = choice }
+    d.addLog({ source: 'auto', kind: f.kind, pattern, outcome, raw: x.dict.live || x.text, interpreted: pipe.value.text, final: `${f.title} → ${c?.label || choice}${auto ? ' (szabály szerint)' : ''}`, live: x.dict.live || undefined, recognizer: x.dict.recognizer, ai })
+    if (f.kind === 'ai') { d.s.aiStats.diffs++; if (choice === 'ai') d.s.aiStats.aiRight++; else d.s.aiStats.ruleRight++ }
+  }
+  function resolveFlag(f: DictFlag, choice: string, auto = false) {
+    const x = s.value; if (!x) return
+    switch (f.kind) {
+      case 'similar': case 'ambig': x.picks[f.key] = choice; x.resolved[f.key] = choice; applyParse(); break
+      case 'prebooked': {
+        x.resolved[f.key] = choice
+        if (choice !== 'none') {
+          const n = Number(choice), unassigned = itemParse.value.done.filter(p => p.tooth === null && isBound(p.typeId)).map(p => p.typeId)
+          const types = f.data?.typeId ? [f.data.typeId as string] : unassigned.length ? unassigned : x.planItems.filter(p => p.tooth === n).map(p => p.typeId)
+          if (f.key.startsWith('pre:mat')) break
+          types.forEach(t => addItem(n, t))
+          if (!types.length && !x.teeth.includes(n)) toggleTooth(n)
+        }
+        break
+      }
+      case 'chart': { x.resolved[f.key] = choice; const n = Number(f.data?.tooth), m = Number(choice); if (m !== n) swapTooth(n, m); break }
+      case 'qty': case 'life': { x.resolved[f.key] = choice; const it = f.data?.item as string; if (choice !== 'ok' && it) { x.overrides[it] = Number(choice); confirmRow(it) } else if (it) confirmRow(it); break }
+      case 'ai': {
+        x.resolved[f.key] = choice
+        if (choice === 'ai') {
+          if (f.data?.item) { x.overrides[f.data.item as string] = Number(f.data.qty); confirmRow(f.data.item as string) }
+          else if (f.data?.add) addItem((f.data.tooth as number | null), f.data.typeId as string)
+          else if (f.data?.key) removeItem(f.data.key as string)
+        }
+        break
+      }
+      default: x.resolved[f.key] = choice
+    }
+    flagLog(f, choice, auto)
+  }
+  /** a megerősített mennyiségi szabály (5. pont): az adott mintára már nem kérdez rá */
+  function autoRules() {
+    const x = s.value; if (!x || x.recordId) return
+    const rules = dictStore().s.qtyRules; if (!rules.length) return
+    reviewC.value.filter(f => f.kind === 'qty' && f.data?.pattern && !x.resolved[f.key]).forEach(f => {
+      const r = rules.find(v => v.pattern === f.data!.pattern); if (!r) return
+      resolveFlag(f, r.outcome === 'szam' ? String(f.data!.qty) : String(f.data!.alt), true)
+    })
+  }
+  /** a fogtérképpel ellenőrzött / ⚠ választással javított fogszám cseréje (kézi felvitelre is) */
+  function swapTooth(n: number, m: number) {
+    const x = s.value; if (!x || n === m) return
+    x.teeth = x.teeth.filter(t => t !== n); if (!x.rmTeeth.includes(n)) x.rmTeeth.push(n)
+    if (!x.teeth.includes(m)) x.teeth.push(m)
+    x.rmTeeth = x.rmTeeth.filter(t => t !== m)
+    if (x.assign[n]) { x.assign[m] = [...new Set([...(x.assign[m] || []), ...x.assign[n]!])]; delete x.assign[n] }
+    x.planItems = x.planItems.map(p => (p.tooth === n ? { ...p, tooth: m } : p))
+    if (x.manualSurf[n]) { x.manualSurf[m] = [...new Set([...(x.manualSurf[m] || []), ...x.manualSurf[n]!])]; delete x.manualSurf[n] }
+    x.toothSub[n] = m; x.focusTooth = m
+    applyParse()
+  }
+  /** kézi javítás naplózása a diktálás után (5. pont, 3.a alpont) */
+  function logCorrection(kind: string, final: string, interpreted: string) {
+    const x = s.value; if (!x || !x.text.trim() || x.recordId) return
+    dictStore().addLog({ source: 'auto', kind, raw: x.dict.live || x.text, interpreted, final, live: x.dict.live || undefined, recognizer: x.dict.recognizer })
+  }
+  /** a Whisper szakszó-listája: előjegyzett tételek → kezelések és anyagok → szótár → tanult kifejezések */
+  const promptText = () => buildPrompt({ plannedTypes: [...new Set([...(s.value?.planItems.map(p => p.typeId) || []), ...(s.value?.types || [])])], types: db.value.types, items: db.value.items, learned: dictStore().s.personal.filter(p => p.active).map(p => p.to) })
+  /** AI-értelmezés (17. pont, csak a demóban kapcsolóval): a szabályalapú mellett fut, az eltérés ⚠ */
+  async function runAi() {
+    const x = s.value, d = dictStore(); if (!x || !d.s.prefs.ai || !x.text.trim() || x.recordId || typeof navigator === 'undefined' || !navigator.onLine) return
+    x.ai = { state: 'run', model: '', items: [], materials: [], error: '' }
+    const ac = new AbortController(), to = setTimeout(() => ac.abort(), 10000)
+    try {
+      const chart = patients.latestStatus(x.patientId)?.teeth || {}
+      const r = await fetch('/api/diktalas/ertelmezes', { method: 'POST', signal: ac.signal, headers: { 'content-type': 'application/json', 'x-molio-device': d.s.deviceId },
+        body: JSON.stringify({ text: pipe.value.cleaned, types: db.value.types.map(t => ({ id: t.id, name: t.name })), items: db.value.items.map(i => ({ id: i.id, name: i.name, unit: i.unit })), planned: x.planItems.map(p => ({ tooth: p.tooth, typeId: p.typeId })), chart: Object.fromEntries(x.planItems.filter(p => p.tooth).map(p => [p.tooth, chart[p.tooth!] || []])) }) })
+      const j = await r.json().catch(() => null) as { ok?: boolean; model?: string; result?: { items?: any[]; materials?: any[] }; exhausted?: boolean; leftPct?: number | null } | null
+      if (j?.leftPct !== undefined) d.aiInfo.leftPct = j.leftPct
+      if (j?.exhausted) { d.aiInfo.exhausted = true; d.s.prefs.ai = false }
+      if (!r.ok || !j?.ok || !j.result) { x.ai = { state: 'err', model: '', items: [], materials: [], error: j?.exhausted ? 'a mai AI-keret elfogyott' : 'az AI-értelmezés nem érhető el' }; return }
+      const okType = (id: string) => db.value.types.some(t => t.id === id), okItem = (id: string) => db.value.items.some(i => i.id === id)
+      const items = (j.result.items || []).filter(i => i && okType(i.typeId)).map(i => ({ tooth: Number.isInteger(i.tooth) && allTeeth('permanent').concat(allTeeth('primary')).includes(i.tooth) ? i.tooth : null, typeId: String(i.typeId), status: i.status === 'suggested' ? 'suggested' : 'done' }))
+      const materials = (j.result.materials || []).filter(m => m && okItem(m.item) && Number(m.qty) > 0).map(m => ({ item: String(m.item), qty: Number(m.qty) }))
+      x.ai = { state: 'done', model: j.model || '', items, materials, error: '' }
+      d.s.aiStats.runs++
+    } catch { x.ai = { state: 'err', model: '', items: [], materials: [], error: 'az AI-értelmezés nem érhető el' } } finally { clearTimeout(to) }
+  }
   const confirmRow = (id: string) => { const x = s.value; if (x && !x.confirmedRows.includes(id)) x.confirmedRows.push(id) }
   function setChecked(id: string, on: boolean) { const x = s.value; if (!x) return; x.unchecked = on ? x.unchecked.filter(v => v !== id) : [...x.unchecked, id] }
-  function setQty(id: string, v: number) { if (s.value) { s.value.overrides[id] = Math.max(0, Number(v) || 0); confirmRow(id) } }
+  function setQty(id: string, v: number) {
+    if (!s.value) return
+    const before = rows.value.find(r => r.id === id)?.qty
+    s.value.overrides[id] = Math.max(0, Number(v) || 0); confirmRow(id)
+    if (before !== undefined && before !== s.value.overrides[id]) logCorrection('mennyiseg', `${db.value.items.find(i => i.id === id)?.name || id}: ${before} → ${s.value.overrides[id]}`, `${before}`)
+  }
   function resetQty(id: string) { if (s.value) delete s.value.overrides[id] }
   function addMaterial(id: string) { const x = s.value; if (!x) return; if (!x.extra.includes(id)) x.extra.push(id); setChecked(id, true); if (x.overrides[id] === undefined) x.overrides[id] = 1 }
 
@@ -368,7 +534,8 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const x = s.value; if (!x) return null
     if (!items.value.length && !x.text.trim()) return { error: 'Válassz kezelést vagy diktálj leírást.' }
     if (sideConflicts.value.length) return { error: 'Oldal és fogszám ellentmond (' + sideConflicts.value.map(c => c.said).join(', ') + '). Erősítsd meg a fogszámot a mentés előtt.' }
-    if (toReview.value) return { error: `${toReview.value} ⚠ jelölésű anyagsort meg kell erősíteni (Megerősítem, vagy módosítsd a mennyiséget), mielőtt a kezelés véglegesíthető.` }
+    if (rowsReview.value) return { error: `${rowsReview.value} ⚠ jelölésű anyagsort meg kell erősíteni (Megerősítem, vagy módosítsd a mennyiséget), mielőtt a kezelés véglegesíthető.` }
+    if (pendingFlags.value.length) return { error: `${pendingFlags.value.length} ⚠ ellenőrzés vár megerősítésre a diktálás ellenőrzésében (válassz, vagy „Rendben”), mielőtt a kezelés véglegesíthető.` }
     const mats = rows.value.filter(r => r.checked && r.qty > 0).map(r => ({ item: r.id, qty: r.qty }))
     const before: Record<string, number> = {}; db.value.items.forEach(i => { before[i.id] = i.stock })
     const done = doneItems.value
@@ -443,7 +610,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     if (!s.value) return
     s.value.statusText = v
     if (sTimer) clearTimeout(sTimer)
-    sTimer = setTimeout(() => { statusParsed.value = analyzeStatus(s.value?.statusText || '', db.value.settings.statusDict, dentition.value) }, delay)
+    sTimer = setTimeout(() => { statusParsed.value = analyzeStatus(preprocess(s.value?.statusText || '', { personal: dictStore().s.personal }).text, db.value.settings.statusDict, dentition.value) }, delay)
   }
   const statusDraft = computed<Record<string, string[]>>(() => ({ ...statusParsed.value.teeth, ...(s.value?.statusEdits || {}) }))
   function setToothStatus(n: number, states: string[]) { if (s.value) s.value.statusEdits[n] = states }
@@ -479,7 +646,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     startFromAppointment, startNew, editRecord, setText, applyParse, toggleTooth, focus, toggleType,
     items, doneItems, itemTotal, setItemState, removeItem, addItem, itemParse, suggestList, addSuggestion, removeSuggestion, setSuggestion, statusChanges, setStatusChange, sideConflicts, confirmConflict, dictStatus,
     surfaces, toggleSurface, needsSurface, missingSurface, extendedTeeth, offDentition,
-    rows, toReview, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
+    rows, toReview, rowsReview, flags, pendingFlags, resolveFlag, swapTooth, pipe, promptText, runAi, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
     attachments, upload, cancel, hasUnsaved, approve, finishDictation, confirmRow, saveDraft, restored, draftOf, dropDraft,
     setMode, setStatusText, statusDraft, setToothStatus, statusConflicts, approveStatus, discardStatus, isDoneAppt,
   }

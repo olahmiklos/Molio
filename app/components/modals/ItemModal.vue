@@ -11,7 +11,7 @@ const inv = useInventoryStore()
 const ui = useUiStore()
 const it = computed(() => inv.itemById(props.id)!)
 const f = computed(() => inv.forecast(it.value))
-const form = ref({ name: it.value.name, group: it.value.group, unit: it.value.unit, supplier: it.value.supplier, target: it.value.target, lead: it.value.lead, kw: it.value.kw.join(', '), lotTracked: !!it.value.lotTracked, implant: !!it.value.implant, safeMode: (it.value.safety?.mode || 'qty') as 'qty' | 'weeks', safeVal: it.value.safety?.value || 0 })
+const form = ref({ name: it.value.name, group: it.value.group, unit: it.value.unit, supplier: it.value.supplier, target: it.value.target, lead: it.value.lead, kw: it.value.kw.join(', '), variants: (it.value.variants || []).join(', '), lotTracked: !!it.value.lotTracked, implant: !!it.value.implant, safeMode: (it.value.safety?.mode || 'qty') as 'qty' | 'weeks', safeVal: it.value.safety?.value || 0 })
 const lots = computed(() => inv.lots(it.value.id))
 const untracked = computed(() => inv.untracked(it.value))
 const days = (d: string) => dayDiff(today(), d)
@@ -22,6 +22,7 @@ function save() {
   const v = form.value, i = it.value
   i.name = v.name.trim() || i.name; i.unit = v.unit.trim() || i.unit; i.group = v.group.trim() || i.group; i.supplier = v.supplier.trim()
   i.lotTracked = v.lotTracked; i.implant = v.implant; i.target = Math.max(1, Number(v.target) || i.target); i.lead = Math.max(0, Number(v.lead) || 0); i.kw = parseKw(v.kw)
+  i.variants = v.variants.split(/[,;\s]+/).map(x => Number(x.replace(',', '.'))).filter(n => n > 0)
   i.safety = Number(v.safeVal) > 0 ? { mode: v.safeMode, value: Number(v.safeVal) } : null
   ui.close(); ui.toast('Anyag mentve')
 }
@@ -60,6 +61,7 @@ function save() {
       <div class="field" style="grid-column:span 2"><label class="f">Megnevezés</label><input v-model="form.name" class="inp"></div>
       <div class="field"><label class="f">Anyagcsoport</label><input v-model="form.group" class="inp" list="dl-groups"></div>
       <div class="field"><label class="f">Egység</label><input v-model="form.unit" class="inp"></div>
+      <div class="field"><label class="f">Kiszerelés-változatok</label><input v-model="form.variants" class="inp" placeholder="pl. 6, 8 (a „6-os” változat)"><div class="small muted">a diktálásnál: „három hatos injekció” = 3 db a 6-os változatból</div></div>
       <div class="field"><label class="f">Beszállító</label><input v-model="form.supplier" class="inp" list="dl-sup"></div>
       <div class="field"><label class="f">Átlagos beszerzési ár</label><input class="inp" :value="fmtPrice(it.price)" disabled title="Bevételezéskor számolódik (gördülő súlyozott átlag)"></div>
       <div class="field"><label class="f">Célkészlet</label><input v-model.number="form.target" class="inp" type="number"></div>

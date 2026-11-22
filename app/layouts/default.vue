@@ -5,6 +5,7 @@ import { useInventoryStore } from '~/stores/inventory'
 import { useTreatmentStore } from '~/stores/treatment'
 import { useSuggestionStore } from '~/stores/suggestion'
 import { useAppointmentStore } from '~/stores/appointment'
+import { useRepository } from '~/repositories'
 import { BUILD_DATE_HU, SPEC, VERSION_BADGE, VERSION_LINE, buildInfo } from '~/utils/meta'
 
 const data = useDataStore()
@@ -35,15 +36,44 @@ function applyUpdate() {
   $pwa.updateServiceWorker(true)
   setTimeout(() => window.location.reload(), 2500)
 }
+// v2.3 6. pont: a main ágon (nyilvános demó) nincs csendes frissítés – felugró „Új verzió érhető el” ablak, OK után (piszkozatmentéssel) újratöltés;
+// a teszt ágon a korábbi működés marad (magától frissít, ha nincs folyamatban lévő munka)
+const isMain = buildInfo().env === 'DEMÓ'
+const showUpdate = ref(false)
+const RESUME = 'molio-resume-v23'
 function tryAutoUpdate() {
   if (!$pwa?.needRefresh) return
+  if (isMain) { showUpdate.value = true; return }
   if (busy.value) { ui.setUpdate(applyUpdate); return }
   applyUpdate()
 }
 watch(() => $pwa?.needRefresh, tryAutoUpdate, { immediate: true })
-watch(busy, b => { if (!b) tryAutoUpdate() })
+watch(busy, b => { if (!b && !isMain) tryAutoUpdate() })
+/** OK: a folyamatban lévő diktálás / szerkesztés piszkozatba kerül, majd az új verzió aktiválódik és az oldal újratöltődik */
+async function confirmUpdate() {
+  try {
+    if (tx.active && tx.s) {
+      tx.applyParse(); tx.saveDraft()
+      localStorage.setItem(RESUME, JSON.stringify({ patientId: tx.s.patientId, apptId: tx.s.appointmentId }))
+      await useRepository().save(data.db)
+    }
+  } catch { /* a frissítés ettől még lefusson */ }
+  applyUpdate()
+}
+async function offerResume() {
+  let j: { patientId: string; apptId: string | null } | null = null
+  try { j = JSON.parse(localStorage.getItem(RESUME) || 'null'); localStorage.removeItem(RESUME) } catch { /* nincs */ }
+  if (!j) return
+  if (await ui.confirm('A frissítés előtt a folyamatban lévő diktálást <b>piszkozatba mentettük</b>. Folytatod ott, ahol abbahagytad?', 'Folytatás', false, 'Később')) {
+    if (j.apptId) tx.startFromAppointment(j.apptId); else tx.startNew(j.patientId)
+    navigateTo('/kezeles')
+  }
+}
 
 onMounted(() => {
+  void nextTick(offerResume)
+  // a main ágon 4 óránként háttér-ellenőrzés a nyitott oldalon (előtérbe kerüléskor és betöltéskor is)
+  if (isMain) setInterval(() => navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => {}), 4 * 3600 * 1000)
   const set = () => { ui.online = navigator.onLine }
   set(); window.addEventListener('online', set); window.addEventListener('offline', set)
   // előtérbe kerüléskor azonnal keres új verziót (telefonon, tableten a háttérből visszatérve)
@@ -122,7 +152,14 @@ onMounted(() => {
         <component :is="m.component" v-bind="m.props" />
       </div>
     </template>
-    <div v-if="ui.confirmState" class="backdrop" style="z-index:150" @mousedown.self="ui.answer(false)">
+    <div v-if="showUpdate" class="backdrop" style="z-index:200;align-items:center" role="alertdialog" aria-modal="true" aria-labelledby="upd-h" data-test="uj-verzio">
+      <div class="modal" style="width:480px;margin-bottom:env(safe-area-inset-bottom)">
+        <div class="mh"><h2 id="upd-h">Új verzió érhető el</h2></div>
+        <div class="mb" style="line-height:1.55">Most került kiadásra a Molio új verziója. Az új verzió használatához kattintson az OK gombra – az oldal újratöltődik. A folyamatban lévő munkát (pl. diktálást) előtte piszkozatba mentjük, újratöltés után felajánljuk a folytatást.</div>
+        <div class="mf" style="padding-bottom:max(14px, env(safe-area-inset-bottom))"><button class="btn pri" @click="confirmUpdate">OK</button></div>
+      </div>
+    </div>
+    <div v-if="ui.confirmState" class="backdrop" style="z-index:250" @mousedown.self="ui.answer(false)">
       <div class="modal">
         <div class="mh"><h2>Megerősítés</h2></div>
         <div class="mb" style="line-height:1.55" v-html="ui.confirmState.msg" />

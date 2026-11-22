@@ -1,14 +1,15 @@
 {
   "name": "molio",
   "private": true,
-  "version": "2.2.0",
-  "description": "Molio – fogorvosi rendelőkezelő program (demó v2.2). Készült: Molio_fogorvosi_szoftver_specifikacio_v2.2 alapján.",
+  "version": "2.3.0",
+  "description": "Molio – fogorvosi rendelőkezelő program (demó v2.3). Készült: Molio_fogorvosi_szoftver_specifikacio_v2.3 alapján.",
   "type": "module",
   "molio": {
-    "spec": "Molio_fogorvosi_szoftver_specifikacio_v2.2",
-    "specVersion": "v2.2"
+    "spec": "Molio_fogorvosi_szoftver_specifikacio_v2.3",
+    "specVersion": "v2.3"
   },
   "scripts": {
+    "accuracy": "vite-node scripts/accuracy.ts",
     "dev": "nuxt dev",
     "build": "nuxt build",
     "generate": "nuxt generate",

@@ -5,6 +5,7 @@ import { norm } from './dates'
 import { applySynonyms } from './codesets'
 import type { Dentition, Item, StatusDef, Surface, SurfaceMap, TreatmentType } from './types'
 import { allTeeth, dentitionOf, isPrimary, toothRange, validTooth } from './teeth'
+import { decodeDecimal } from './dict/numbers'
 
 export const NUMW: Record<string, number> = {
   egy: 1, egyet: 1, ket: 2, ketto: 2, kettot: 2, harom: 3, harmat: 3, negy: 4, negyet: 4, ot: 5, otot: 5, hat: 6, hatot: 6, het: 7, hetet: 7,
@@ -38,6 +39,7 @@ export const anyKw = (toks: string[], i: number, list?: string[]) => (list || []
 export function numVal(tok: string | undefined): number | null {
   if (!tok) return null
   if (/^\d+$/.test(tok)) return parseInt(tok, 10)
+  if (tok.startsWith('qx')) return decodeDecimal(tok)
   return NUMW[tok] ?? null
 }
 
@@ -47,7 +49,7 @@ const TENS = ['tizen', 'huszon', 'harminc', 'negyven', 'otven', 'hatvan', 'hetve
 const ROMAN: Record<string, number> = { i: 1, ii: 2, iii: 3, iv: 4, v: 5 }
 const SUFFIX_RE = /^(os|es|as|ast|est|ost|osre|esre|asra|osra|osnal|esnel|asnal|osat|eset|asat|oson|esen|ason|tol|tal|ig)$/
 
-function ordinalOf(tok: string | undefined): number | null {
+export function ordinalOf(tok: string | undefined): number | null {
   if (!tok) return null
   for (let i = 0; i < ORD.length; i++) if (tok.startsWith(ORD[i]!) && tok.length - ORD[i]!.length <= 4) return i + 1
   return null
@@ -71,6 +73,12 @@ function abbrev(tok: string | undefined): Surface[] | null {
 const isSide = (t: string | undefined) => (t === 'jobb' || !!t?.startsWith('jobboldal') ? 'R' : t === 'bal' || !!t?.startsWith('baloldal') ? 'L' : null)
 const isJaw = (t: string | undefined) => (t?.startsWith('felso') ? 'U' : t?.startsWith('also') ? 'D' : null)
 
+/** a fogszám utáni rövidítés vessző után is a fogé („fog huszonöt, MO kompozit tömés”) – de csak többbetűs (MO, MOD, DO), az egybetűs túl félreérthető */
+function abbrevAfter(toks: string[], end: number): { ab: Surface[]; end: number } | null {
+  const a = abbrev(toks[end + 1]); if (a) return { ab: a, end: end + 1 }
+  if (toks[end + 1] === '|' && (toks[end + 2] || '').length >= 2) { const b = abbrev(toks[end + 2]); if (b) return { ab: b, end: end + 2 } }
+  return null
+}
 export interface ToothMention { n: number; start: number; end: number; abbr?: Surface[] }
 
 /** a szövegben elhangzó fogak (FDI-szám, „tizenhatos”, „jobb felső hatos”, „bal alsó római hármas”, „tejfog”) */
@@ -93,6 +101,7 @@ export function findTeeth(toks: string[], opts: { wisdomAll?: boolean } = {}): T
       if (end === i + 1 && (nx2.startsWith('fog') || nx2.startsWith('tejfog'))) end = i + 2
       const ab = abbrev(toks[end + 1]) || (end === i ? abbrev(nx) : null)
       if (ab) end = end === i ? i + 1 : end + 1
+      else { const aa = abbrevAfter(toks, end); if (aa) { out.push({ n, start: i, end: aa.end, abbr: aa.ab }); for (let k = i; k <= aa.end; k++) used.add(k); continue } }
       out.push({ n, start: i, end, abbr: ab || undefined })
       for (let k = i; k <= end; k++) used.add(k)
       continue
@@ -103,6 +112,7 @@ export function findTeeth(toks: string[], opts: { wisdomAll?: boolean } = {}): T
       let end = i
       if ((toks[i + 1] || '').startsWith('fog') || (toks[i + 1] || '').startsWith('tejfog')) end = i + 1
       const ab = abbrev(toks[end + 1]); if (ab) end++
+      else { const aa = abbrevAfter(toks, end); if (aa) { out.push({ n: fw, start: i, end: aa.end, abbr: aa.ab }); for (let k = i; k <= aa.end; k++) used.add(k); continue } }
       out.push({ n: fw, start: i, end, abbr: ab || undefined })
       for (let k = i; k <= end; k++) used.add(k)
       continue
@@ -178,7 +188,7 @@ export interface ParseResult {
 }
 
 /** mennyiségjelző és töltelékszavak a szám és az anyagnév között */
-const FILLER = new Set(['darab', 'darabot', 'db', 'adag', 'adagot', 'par', 'part', 'ml', 'kerek', 'kell', 'kellett', 'hasznaltam', 'hasznaltunk', 'ment', 'fogyott', 'el', 'ebbol', 'abbol', 'osszesen', 'kb', 'korulbelul'])
+const FILLER = new Set(['darab', 'darabot', 'db', 'adag', 'adagot', 'par', 'part', 'ml', 'kerek', 'kell', 'kellett', 'hasznaltam', 'hasznaltunk', 'ment', 'fogyott', 'el', 'ebbol', 'abbol', 'osszesen', 'kb', 'korulbelul', 'kerem', 'felhasznaltam', 'tettem', 'bele', 'rament', 'elment', 'szoval'])
 const REL_WORDS = new Set(['meg', 'plusz', 'pluszban', 'tovabbi', 'ujabb'])
 /** az anyagnév után álló szám csak akkor mennyiség, ha mértékegység, ige vagy tagmondatvég követi */
 const afterNumOk = (t: string | undefined) => !t || t === '|' || FILLER.has(t) || REL_WORDS.has(t) || /^(ot|et|at|ast|est|ost)$/.test(t)
@@ -378,8 +388,8 @@ export interface ItemParse {
   conflicts: SideConflict[]
 }
 /** a fog említése a javaslat jelzőszavával: „tömés szükséges”, „javasolt”, „kell”, „indokolt”, „érdemes” */
-const SUGGEST_CUES = ['szukseges', 'szukseg', 'javasol', 'kell', 'indokol', 'ajanl', 'erdemes', 'tervez', 'esedekes']
-const isCue = (t: string | undefined) => !!t && SUGGEST_CUES.some(c => t.startsWith(c)) && !/^(kellett|kellene)/.test(t)
+const SUGGEST_CUES = ['szukseges', 'szukseg', 'javasol', 'javasl', 'kell', 'indokol', 'ajanl', 'erdemes', 'tervez', 'esedekes']
+const isCue = (t: string | undefined) => !!t && SUGGEST_CUES.some(c => t.startsWith(c)) && !/^kellett/.test(t)
 const RECALL_TYPES = new Set(['kontroll', 'fogko'])
 const sideOf = (n: number) => { const q = n >= 51 ? quadrantOf(n) - 4 : quadrantOf(n); return q === 1 || q === 4 ? 'jobb' : 'bal' }
 const jawOf = (n: number) => { const q = n >= 51 ? quadrantOf(n) - 4 : quadrantOf(n); return q <= 2 ? 'felső' : 'alsó' }
@@ -425,7 +435,7 @@ export function analyzeItems(text: string, st: ParseCtx): ItemParse {
     // határidő a mondatrészben vagy a következőben: „javasolt a 36-os gyökérkezelése, két héten belül”
     const hasWithin = (cl: { from: number; to: number }) => toks.slice(cl.from, cl.to + 1).some(t => t.startsWith('belul') || t === 'multa' || t === 'mulva')
     const dueHere = hasWithin(c) ? dueFrom(toks, c.from, c.to) : null
-    const urgent = toks.slice(c.from, c.to + 1).some(t => t.startsWith('surgos'))
+    const urgent = toks.slice(c.from, c.to + 1).some(t => t.startsWith('surgos') || t === 'mielobb')
     if (!types.size) {
       // csak fog vagy csak határidő/sürgősség – a korábbi javaslathoz tartozhat
       if (dueHere !== null && lastSug.length) lastSug.forEach(p => { if (p.dueDays === null) p.dueDays = dueHere })

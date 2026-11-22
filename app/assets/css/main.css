@@ -372,3 +372,9 @@ ul.sum { margin: 0; padding-left: 20px; line-height: 1.75 }
 @media print { .hdr, .tabbar, .foot, .demobar, .alertbar, .topbar { display: none } }
 .txbar { position: sticky; bottom: calc(10px + var(--safe-b)); z-index: 15; margin-top: 6px; border-top: 4px solid var(--green) }
 @media (max-width: 760px) { .txbar { bottom: calc(68px + var(--safe-b)); padding: 10px 12px } .txbar .fee { font-size: 16px } }
+.warn.strong { border-width: 2px; font-size: 14px; box-shadow: 0 0 0 3px rgba(245, 137, 31, .18) }
+.free button.near { border-color: var(--orange); color: #9a4b00; background: #fff7ec }
+.chip.disabled, .chip:disabled { background: #eef1f3; border-color: #dfe5ea; color: #9aa5b1; cursor: not-allowed; box-shadow: none }
+.chip.disabled:hover { border-color: #dfe5ea; color: #9aa5b1 }
+.channel-picker .chip { min-height: 40px }
+@media (pointer: coarse) { .channel-picker .chip { min-height: 46px; padding: 9px 18px; font-size: 14px } }

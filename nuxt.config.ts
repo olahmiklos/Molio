@@ -91,9 +91,11 @@ export default defineNuxtConfig({
       navigateFallback: '/',
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
       cleanupOutdatedCaches: true,
+      // a Worker API-végpontjait (diktálás) a service worker nem írhatja felül az oldal-fallbackkel
+      navigateFallbackDenylist: [/^\/api\//],
     },
-    // 5 percenként és az alkalmazás előtérbe kerülésekor új verziót keres (a layout magától frissít, ha nincs folyamatban lévő munka)
-    client: { installPrompt: false, periodicSyncForUpdates: 300 },
+    // teszt ágon 5 percenként, a main ágon 4 óránként (spec v2.3, 6. pont) és az alkalmazás előtérbe kerülésekor új verziót keres
+    client: { installPrompt: false, periodicSyncForUpdates: BUILD.branch === 'main' ? 14400 : 300 },
     devOptions: { enabled: false },
   },
 })

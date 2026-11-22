@@ -1,0 +1,27 @@
+{
+  "examples": 150,
+  "checks": 356,
+  "total": 99.4,
+  "byCat": {
+    "fogszám": 99.1,
+    "felszín": 100,
+    "művelet": 99.1,
+    "anyag": 100,
+    "mennyiség": 100
+  },
+  "at": "2026-11-22T21:37:17.637Z",
+  "mode": "teljes lánc (v2.3)",
+  "prev": {
+    "total": 78.1,
+    "byCat": {
+      "fogszám": 59.8,
+      "felszín": 42.4,
+      "művelet": 98.2,
+      "anyag": 92,
+      "mennyiség": 84
+    },
+    "examples": 150,
+    "mode": "v2.2 (teszt ág, 73ac8ca)"
+  },
+  "worse": []
+}

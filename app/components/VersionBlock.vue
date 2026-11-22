@@ -2,6 +2,10 @@
 // Verzió és frissítés (spec v2.2, 3. pont): verziójelzés, build adatai, „Frissítés keresése”, másolható adatok, TESZT/DEMÓ jelölés
 import { useDataStore } from '~/stores/data'
 import { useUiStore } from '~/stores/ui'
+import acc from '~/data/accuracy.json'
+import { useDictStore } from '~/stores/dict'
+import { useVoiceStore } from '~/stores/voice'
+import { AI_MODEL_LABEL, WHISPER_MODEL } from '~/utils/dict/prompt'
 import { APP_VERSION, BUILD_TIME_HU, SPEC, VERSION_LINE, buildInfo, versionReport } from '~/utils/meta'
 
 const data = useDataStore()
@@ -9,7 +13,12 @@ const ui = useUiStore()
 const { $pwa } = useNuxtApp() as any
 const b = buildInfo()
 const state = ref<'idle' | 'checking' | 'latest' | 'found' | 'unsupported'>('idle')
-const report = computed(() => versionReport(data.db.version))
+const dict = useDictStore(), voice = useVoiceStore()
+onMounted(() => { dict.init(); void voice.probe() })
+const recognizer = computed(() => dict.s.prefs.recognizer === 'whisper' ? `Pontos felismerés (Whisper – ${WHISPER_MODEL})` : 'Alap felismerés (a böngésző saját felismerője)')
+const aiLine = computed(() => `${AI_MODEL_LABEL} – ${dict.s.prefs.ai ? 'be van kapcsolva' : 'ki van kapcsolva (kísérleti)'}`)
+const accLine = computed(() => `Diktálás-értelmezés pontossága: ${String(acc.total).replace('.', ',')}% – tesztkészlet: ${acc.examples} példa${acc.prev ? ` (előző kiadás: ${String(acc.prev.total).replace('.', ',')}%)` : ''}`)
+const report = computed(() => [versionReport(data.db.version), `Felismerő: ${recognizer.value}`, `AI-értelmezés: ${aiLine.value}`, accLine.value].join('\n'))
 
 async function check() {
   state.value = 'checking'
@@ -39,6 +48,9 @@ async function copy() {
     <div class="kv">
       <div>Verzió</div><div><b>{{ VERSION_LINE }}</b> <span v-if="b.env !== 'DEMÓ'" class="badge b-yellow">{{ b.env }}</span><span v-else class="badge b-green">DEMÓ</span><br><span class="muted">Molio {{ APP_VERSION }} · {{ SPEC.title }}</span></div>
       <div>Build</div><div>{{ BUILD_TIME_HU }}</div>
+      <div>Felismerő</div><div>{{ recognizer }}</div>
+      <div>AI-értelmezés</div><div>{{ aiLine }}</div>
+      <div>Pontosság</div><div>{{ accLine }}<br><span class="muted small">kategóriánként: <template v-for="(v, k) in acc.byCat" :key="k">{{ k }} {{ String(v).replace('.', ',') }}% · </template></span></div>
       <div v-if="b.env !== 'DEMÓ'">Ág és kód</div><div v-if="b.env !== 'DEMÓ'">{{ b.branch || 'ismeretlen' }} · <code>{{ b.short || 'ismeretlen' }}</code></div>
       <div v-else>Kód</div><div v-if="b.env === 'DEMÓ'"><code>{{ b.short || 'ismeretlen' }}</code> <span class="muted">({{ b.branch }})</span></div>
     </div>

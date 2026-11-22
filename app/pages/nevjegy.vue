@@ -20,12 +20,12 @@ onMounted(() => { ua.value = navigator.userAgent; speech.value = !!((window as a
         <div>Név</div><div>Molio = <i>molar</i> (őrlőfog) + IO</div>
         <div>Mintacég</div><div>Cooldent Kft. (kitalált) – egy telephely, egy rendelő, két fogorvos</div>
         <div>Adattárolás</div><div>A böngésző saját tárolójában (IndexedDB), csak ezen az eszközön. Szerver és adatbázis nincs.</div>
-        <div>Diktálás</div><div>A böngésző beépített magyar beszédfelismerése + szabályalapú értelmezés. Ebben a böngészőben: <b :style="speech ? 'color:var(--green)' : 'color:var(--red)'">{{ speech ? 'elérhető' : 'nem érhető el – a szöveg gépelhető' }}</b></div>
-        <div>AI</div><div>A demóban nincs AI-kapcsolat; az AI-összefoglaló a későbbi verziókban jön.</div>
+        <div>Diktálás</div><div>Pontos felismerés a Cloudflare Workers AI Whisper-modelljével (szakszó-listával), élő előnézet a böngésző beszédfelismerőjével, tartalékként a böngésző saját felismerője; szleng-szótár, hasonlóság szerinti egyeztetés és szabályalapú értelmezés. A böngésző felismerője: <b :style="speech ? 'color:var(--green)' : 'color:var(--red)'">{{ speech ? 'elérhető' : 'nem érhető el – a szöveg gépelhető' }}</b></div>
+        <div>AI</div><div>Kísérleti AI-értelmezés a diktálásnál kapcsolóval (Cloudflare Workers AI nyelvi modell, kulcs nélkül, napi kerettel); a hangfelvétel nem tárolódik.</div>
       </div>
     </div>
     <div class="card">
-      <h2>A demó hatóköre (demó v2.2, specifikáció v2.2)</h2>
+      <h2>A demó hatóköre (demó v2.3, specifikáció v2.3)</h2>
       <ul style="line-height:1.8;margin:0;padding-left:20px">
         <li><b>Recepció:</b> betegnyilvántartás, két fogorvos naptára (napi, heti, havi nézet), ráhagyási sávok, emlékeztetők előnézete és szimulált küldése, meg nem jelenési kockázat.</li>
         <li><b>Kezelés:</b> diktálás, fogszám (FDI, „tizenhatos”, „jobb felső hatos”, tejfogak), fogfelszínek és bővítés kezelés közben, anyagjavaslat, díj a felszínek szerint, ívelt röntgenszerű fogtérkép, fogazati státusz diktálással, csatolmányok, PDF ügyfélkarton.</li>
@@ -33,7 +33,8 @@ onMounted(() => { ua.value = navigator.userAgent; speech.value = !!((window as a
         <li><b>Új a 2.0-ban:</b> digitális beleegyező nyilatkozat tableten aláírva (PDF a kartonba), közérthető páciens-tájékoztató orvosi jóváhagyással, kontroll-meghívók (recall), sterilizációs napló, EESZT-jelentés és számla előkészítése (szemléltetés), letölthető felhasználói kézikönyv.</li>
         <li><b>Új a v2.1 specifikációban:</b> több fog és több művelet egy kezelési alkalomban (kezelési tételek), a diktált fogállapot frissíti a fogtérképet, javasolt kezelések követése („időpontot kell egyeztetni” lista), kontroll-emlékeztetők sablonüzenettel, a „NEM” válasz az időpont-emlékeztetőre, raktári szűrők és megrendelés-követés, a páciens Kezelések almenüje a jövőbeli időpontokkal, diktálás-időkorlát (30 mp) a demóban.</li>
         <li><b>Új a v2.2 specifikációban:</b> figyelmeztetés a páciens meglévő időpontjairól foglaláskor, időpont törlése 30 napos visszaállítással, tételek áthelyezése és időpontok összevonása, verziójelzés és „Frissítés keresése”, a diktálás azonnali feldolgozása előnézettel és ⚠-megerősítéssel (piszkozat 7 napig), kötelező kezelő orvos, a javasolt kezelés forrásvizitje és több tétel egy időponton részleges ütemezéssel, tájékoztató üzenet rögzített időponthoz és egységes Teendők menü.</li>
-        <li><b>Nem része:</b> bejelentkezés és szerepkörök, drag-and-drop foglalás, check-in és váróterem, valódi SMS/e-mail küldés, valódi EESZT-beküldés és számlakiállítás, AI-feldolgozás.</li>
+        <li><b>Új a v2.3 specifikációban:</b> a diktálás pontosítása (szerveroldali Whisper-felismerés szakszó-listával, élő előnézet, felvétel- és hangerőjelző, zajszűrés, kitaláció-szűrő), diktálási alapszótár és ismeretlen kifejezések gyűjtése, hasonlóság szerinti egyeztetés, az előjegyzett kezelés és a fogtérkép felhasználása az ellenőrzésben, javítási napló és „Nem ezt mondtam” jelzés tanuló szabályokkal, „Diktálás betanítása” és személyes javítások, kísérleti AI-értelmezés, automatikus pontosságmérés kiadás előtt, csatornaválasztó gombok a tájékoztató- és emlékeztető-küldésben, a fogállapot-szótár a Kódtáblák alatt, foglalási időtartam- és közeli időpont-javítások (B-006, B-007), új verzió felugró ablak a main ágon.</li>
+        <li><b>Nem része:</b> bejelentkezés és szerepkörök, drag-and-drop foglalás, check-in és váróterem, valódi SMS/e-mail küldés, valódi EESZT-beküldés és számlakiállítás, kéz nélküli diktálás és hangparancsok (12. pont: csak a végleges változatban).</li>
       </ul>
     </div>
     <div class="card">

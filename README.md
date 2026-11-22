@@ -2,13 +2,13 @@
 
 Fogorvosi rendelőkezelő program diktálással (Nuxt 3 PWA, Pinia, Prisma, PostgreSQL).
 
-> **Készült a `Molio_fogorvosi_szoftver_specifikacio_v2.2` dokumentum alapján**
-> (Molio — Fogorvosi Szoftver — Funkcionális Specifikáció, **v2.2**, utolsó módosítás: 2026. november 19.).
+> **Készült a `Molio_fogorvosi_szoftver_specifikacio_v2.3` dokumentum alapján**
+> (Molio — Fogorvosi Szoftver — Funkcionális Specifikáció, **v2.3**, utolsó módosítás: 2026. november 22.).
 > A verzió és a specifikáció hivatkozása az alkalmazásban is látszik: lábléc és **Beállítások → Névjegy**.
 
-Ez a **2.2 bemutató (demó) verzió**: kitalált mintaadatokkal (Cooldent Kft.), szerver és adatbázis nélkül.
+Ez a **2.3 bemutató (demó) verzió**: kitalált mintaadatokkal (Cooldent Kft.), szerver és adatbázis nélkül.
 Az adatok a böngésző tárolójában (IndexedDB) vannak, ezért a módosítások csak az adott eszközön és böngészőben látszanak.
-AI-feldolgozás nincs benne, a diktálást a böngésző beépített magyar beszédfelismerése alakítja szöveggé, a mezőket szabályok töltik ki.
+A diktálást a Cloudflare Workers AI Whisper-modellje alakítja szöveggé (a böngésző beépített felismerője tartalék és élő előnézet), a mezőket szabályok töltik ki; kísérleti AI-értelmezés kapcsolóval bekapcsolható. A hangfelvétel nem tárolódik.
 
 ## Mit tud a demó
 
@@ -16,6 +16,7 @@ AI-feldolgozás nincs benne, a diktálást a böngésző beépített magyar besz
 - **Kezelés:** diktálás, fogszám-felismerés (FDI-szám, „tizenhatos”, „jobb felső hatos”, tejfogak „tejfog”/„római” jelöléssel), fogfelszínek (M, O/I, D, V, L) és bővítés kezelés közben, anyagjavaslat és összevetés, díj a felszínek száma szerint, ívelt röntgenszerű fogtérkép előzményekkel és röntgenkép-váltással, fogazati státusz diktálással, csatolmányok, PDF ügyfélkarton.
 - **Raktár:** készlet, automatikus levonás, 60 napos előrejelzés és rendelési határidő, bevételezés egységárral és **gördülő súlyozott átlagárral**, gyártási szám (LOT) és lejárat, kiadás lejárat szerint, rendelési javaslat (a rendelést munkatárs adja le), implantátum-nyomonkövetés és LOT-keresés visszahíváshoz, törzsadatok, kezelési csomagok és felismerési szótár szerkesztése.
 - **v2.2:** figyelmeztetés a páciens meglévő időpontjairól foglaláskor; időpont törlése 30 napos visszaállítással, tételek áthelyezése, időpontok összevonása; verziójelzés és „Frissítés keresése”; diktálás azonnali előnézete ⚠-megerősítéssel és 7 napos piszkozattal; kötelező kezelő orvos; javasolt kezelés forrásvizitje, több tétel egy időponton; tájékoztató üzenet időponthoz, egységes Teendők menü.
+- **v2.3:** a diktálás pontosítása: szerveroldali Whisper-felismerés (Cloudflare Workers AI, `worker/index.ts`) szakszó-listával, élő előnézet, felvétel- és hangerőjelző, zajszűrés, kitaláció-szűrő; diktálási alapszótár (131 sor) és ismeretlen kifejezések; hasonlóság szerinti egyeztetés; az előjegyzett kezelés és a fogtérkép felhasználása az ellenőrzésben; javítási napló, „Nem ezt mondtam” jelzés, tanuló szabályok; „Diktálás betanítása” és személyes javítások; kísérleti AI-értelmezés; automatikus pontosságmérés (`npm run accuracy`); csatornaválasztó gombok; a fogállapot-szótár a Kódtáblák alatt; B-006 (foglalás időtartama) és B-007 (közeli időpont) javítása; új verzió felugró ablak a main ágon.
 - **v2.0:** beleegyező nyilatkozat tableten aláírva (PDF a kartonba), közérthető páciens-tájékoztató orvosi jóváhagyással, kontroll-meghívók (recall), sterilizációs napló, EESZT-jelentés és számla előkészítése (szemléltetés).
 
 ## Felhasználói kézikönyv
@@ -25,6 +26,20 @@ A kézikönyv forrása a `docs/kezikonyv.md`. Minden buildnél (`nuxt build` / `
 **Súgó** oldalon (`/#/sugo`) adja letöltésre. Így az éles oldal kézikönyve akkor frissül, amikor új verzió kerül a `main` ágra;
 a `teszt` ág előnézetében a címlap „teszt-előnézet” jelzést kap. Kézi előállítás: `npm run manual`.
 Új funkciónál a `docs/kezikonyv.md` megfelelő fejezetét is frissíteni kell.
+
+## Cloudflare Worker, Workers AI és KV (v2.3)
+
+A demó statikus Nuxt build marad (`.output/public`), de előtte egy kis Worker (`worker/index.ts`, `wrangler.jsonc`) szolgálja ki az `/api/*` kéréseket:
+`POST /api/diktalas/atiras` (Whisper), `POST /api/diktalas/ertelmezes` (AI-értelmezés), `POST /api/diktalas/naplo` (anonimizált javítási napló), `GET /api/diktalas/keret` (becsült napi keret).
+A Workers AI az `AI` bindingen, kulcs nélkül, a fiók jogán érhető el. A központi javítási napló és a keretbecslés egy **KV névteret** (`MOLIO_LOG`) használ;
+amíg ez nincs létrehozva és bekötve, a Worker kecsesen kezeli (a kliens az eszközön várakoztatja a bejegyzéseket). Létrehozás: `npx wrangler kv namespace create MOLIO_LOG`,
+majd a kapott azonosító a `wrangler.jsonc`-ban: `"kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "<id>" }]`.
+
+## Pontosságmérés kiadás előtt (v2.3, 16. pont)
+
+`npm run accuracy` lefuttatja a tesztkészletet (`tests/accuracy/set.ts`) a teljes értelmezési láncon, kategóriánként összeveti az elvárt értelmezéssel és az előző kiadás eredményével
+(`app/data/accuracy-baseline.json`), az eredményt az `app/data/accuracy.json`-ba írja (ez látszik a Névjegy / Verzió blokkban). Ha bármely kategória több mint 2 ponttal romlik, 2-es kilépési kóddal megáll.
+Új kiadásnál az `accuracy.json` tartalmát kell az `accuracy-baseline.json`-ba másolni (`--baseline` kapcsoló a jelenlegi futás mentéséhez).
 
 ## Publikálás Cloudflare Pages-re
 

@@ -18,7 +18,7 @@ const text = ref('')
 const edited = ref(false)
 watch([tplId, row], () => { if (row.value && !edited.value) text.value = recallText(db.value, row.value, tplId.value) }, { immediate: true })
 const p = computed(() => row.value?.patient)
-const useMail = ref(!!p.value?.email), useSms = ref(!p.value?.email && !!p.value?.phone)
+const useMail = ref(!!p.value?.email), useSms = ref(!!p.value?.phone)
 const chans = computed(() => [useSms.value && 'SMS', useMail.value && 'e-mail'].filter(Boolean) as string[])
 function send() {
   if (!row.value || !chans.value.length) return
@@ -41,18 +41,14 @@ function send() {
     </div>
     <div class="field">
       <label class="f">Csatorna</label>
-      <div class="row">
-        <label class="chip" :class="{ on: useSms, disabled: !p.phone }" @click.prevent="p.phone && (useSms = !useSms)">📱 SMS</label>
-        <label class="chip" :class="{ on: useMail, disabled: !p.email }" @click.prevent="p.email && (useMail = !useMail)">✉ E-mail</label>
-        <span v-if="!p.email" class="small muted">e-mail-cím nincs megadva</span>
-      </div>
+      <ChannelPicker v-model:sms="useSms" v-model:email="useMail" :phone="p.phone" :mail="p.email" />
     </div>
     <div class="field"><label class="f">Üzenet szövege <span class="n">(küldés előtt javítható)</span></label><textarea v-model="text" class="inp" rows="5" @input="edited = true" /></div>
     <div class="hint">Demó: az üzenet ténylegesen nem megy ki, csak a kiküldés ténye és időpontja rögzül a listán.</div>
     <template #foot>
       <div class="spacer" />
       <button class="btn" @click="ui.close()">Mégse</button>
-      <button class="btn pri" :disabled="row.noContact || !chans.length" @click="send">Küldés (demó)</button>
+      <button class="btn pri" :disabled="row.noContact || !chans.length" :title="chans.length ? '' : 'Válasszon csatornát'" @click="send">Küldés (demó)</button>
     </template>
   </ModalShell>
 </template>

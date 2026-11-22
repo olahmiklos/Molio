@@ -14,6 +14,9 @@ import { defaultRecallTemplates, SUGGEST_TPL } from '~/utils/defaults'
 import { uid } from '~/utils/dates'
 import ItemModal from '~/components/modals/ItemModal.vue'
 import NewItemModal from '~/components/modals/NewItemModal.vue'
+import CodesPanel from '~/components/dict/CodesPanel.vue'
+import DictSettings from '~/components/dict/DictSettings.vue'
+import DictTrain from '~/components/dict/DictTrain.vue'
 
 const data = useDataStore()
 const inv = useInventoryStore()
@@ -21,7 +24,10 @@ const ui = useUiStore()
 const tx = useTreatmentStore()
 const db = computed(() => data.db)
 const st = computed(() => db.value.settings)
-const tab = ref<'clinic' | 'notify' | 'pkg' | 'codes' | 'master' | 'integr'>('clinic')
+const route = useRoute()
+const TABS = ['clinic', 'notify', 'pkg', 'codes', 'dict', 'train', 'master', 'integr'] as const
+const tab = ref<typeof TABS[number]>((TABS as readonly string[]).includes(String(route.query.tab)) ? String(route.query.tab) as typeof TABS[number] : 'clinic')
+watch(() => route.query.tab, v => { if ((TABS as readonly string[]).includes(String(v))) tab.value = String(v) as typeof TABS[number] })
 const pkgSel = ref(db.value.types[0]?.id || '')
 const t = computed(() => db.value.types.find(x => x.id === pkgSel.value))
 const hours = Array.from({ length: 17 }, (_, i) => i + 6)
@@ -30,13 +36,6 @@ const saved = () => ui.toast('Mentve')
 const sample = computed(() => futureAppts(db.value)[0] || { patientId: db.value.patients[0]!.id, doctorId: db.value.doctors[0]!.id, date: today(), start: '10:00', typeIds: [db.value.types[0]!.id] })
 function resetTpl() { const d = defaultNotify(); Object.assign(st.value.notify, { smsTpl: d.smsTpl, mailSubj: d.mailSubj, mailTpl: d.mailTpl }); saved() }
 
-const syn = computed(() => { if (!st.value.synonyms) st.value.synonyms = JSON.parse(JSON.stringify(DEFAULT_SYNONYMS)); return st.value.synonyms! })
-const codes = computed(() => codeTables(db.value))
-const codeOpen = ref<string>('')
-function synSaved() { setSynonyms(st.value.synonyms); saved() }
-function addSyn() { syn.value.push({ id: uid(), from: '', to: '', group: 'egyéb' }); }
-function delSyn(id: string) { st.value.synonyms = syn.value.filter(x => x.id !== id); synSaved() }
-function resetSyn() { st.value.synonyms = JSON.parse(JSON.stringify(DEFAULT_SYNONYMS)); synSaved() }
 function addRecallTpl() { st.value.recallTemplates.push({ id: uid(), name: 'Új sablon', text: 'Kedves {név}! ' }); saved() }
 function delRecallTpl(id: string) { if (st.value.recallTemplates.length <= 1) { ui.toast('Legalább egy sablon kell.'); return } st.value.recallTemplates = st.value.recallTemplates.filter(x => x.id !== id); saved() }
 function resetRecallTpl() { st.value.recallTemplates = defaultRecallTemplates(); st.value.suggestTemplate = SUGGEST_TPL; saved() }
@@ -60,7 +59,6 @@ async function delItem(id: string) {
   if (!(await ui.confirm(`Törlöd ezt az anyagot a törzsadatokból: <b>${it?.name}</b>?`, 'Törlés', true))) return
   inv.deleteItem(id); ui.toast('Anyag törölve')
 }
-function addStatusDef() { st.value.statusDict.push({ id: 's' + Date.now().toString(36), name: 'új állapot', kw: [] }) }
 async function resetDemo() {
   if (!(await ui.confirm('Minden adat visszaáll a kiinduló mintaadatokra. A saját felvitt páciensek, időpontok, kezelések és csatolmányok törlődnek. Folytatod?', 'Visszaállítás', true))) return
   tx.cancel(); await data.reset(); ui.toast('Visszaállítva alaphelyzetbe'); navigateTo('/')
@@ -77,14 +75,15 @@ async function resetDemo() {
         <button :class="{ on: tab === 'notify' }" @click="tab = 'notify'">Értesítések</button>
         <button :class="{ on: tab === 'pkg' }" @click="tab = 'pkg'">Kezelési csomagok</button>
         <button :class="{ on: tab === 'codes' }" @click="tab = 'codes'">Kódtáblák és szinonimák</button>
+ <button :class="{ on: tab === 'dict' }" @click="tab = 'dict'">Diktálás</button>
+        <button :class="{ on: tab === 'train' }" @click="tab = 'train'">Diktálás betanítása</button>
         <button :class="{ on: tab === 'master' }" @click="tab = 'master'">Anyag-törzsadatok</button>
         <button :class="{ on: tab === 'integr' }" @click="tab = 'integr'">Kapcsolatok</button>
       </div>
     </div>
 
     <div class="ai-note">
-      <b>Molio 2.0 – bemutató verzió:</b> a diktálásnál ez a verzió csak szövegfelismerést tartalmaz (a böngésző beépített magyar beszédfelismerése és szabályalapú értelmezés).
-      A mesterséges intelligenciával készülő összefoglaló, a pontosabb AI-strukturálás és a hozzá tartozó kulcskezelés a későbbi verziókban lesz elérhető; a demóban nincs AI-kapcsolat és nem kell API-kulcsot megadni.
+      <b>Molio {{ APP_VERSION.replace(/\.0$/, '') }} – bemutató verzió:</b> a diktálás pontos felismerése a Cloudflare Workers AI Whisper-modelljével működik (a böngésző felismerője tartalék és élő előnézet); a kísérleti AI-értelmezés a Diktálás lapon kapcsolható be. API-kulcsot nem kell megadni.
     </div>
 
     <!-- klinika -->
@@ -154,36 +153,10 @@ async function resetDemo() {
       </div>
     </template>
 
-    <!-- kódtáblák és szinonimák (5. pont) -->
-    <template v-else-if="tab === 'codes'">
-      <div class="hint">
-        A fogak, felszínek, állapotok, kezelések és anyagok <b>kódtáblákban</b> vannak (éles rendszerben PostgreSQL-táblák: verziószám {{ codes.version }}, {{ codes.date }}), a diktálás értelmezése ezekre és a <b>szinonimatáblára</b> épül.
-        A szinonimatábla megmondja, hogy a köznyelvi vagy rövidített kifejezés (pl. „nyolcas”, „bölcsességfog”) melyik szabványos kifejezésre képződjön le. A demó a szabványos kódtáblákat tartalmazza; országos kódrendszer (pl. OENO) később csatolható.
-      </div>
-      <div class="card">
-        <div class="row" style="margin-bottom:10px"><h2 style="margin:0">Szinonimatábla</h2><span class="badge b-gray">{{ syn.length }} bejegyzés</span><div class="spacer" /><button class="btn sm" @click="addSyn">+ Új szinonima</button><button class="btn sm" @click="resetSyn">Alapértékek</button></div>
-        <div class="scroll-x">
-          <table class="t">
-            <thead><tr><th>Ha ezt mondja…</th><th>…ezt értjük alatta</th><th>Csoport</th><th /></tr></thead>
-            <tbody>
-              <tr v-for="s in syn" :key="s.id">
-                <td><input v-model.lazy="s.from" class="inp" @change="synSaved"></td><td><input v-model.lazy="s.to" class="inp" @change="synSaved"></td>
-                <td><input v-model.lazy="s.group" class="inp" style="width:120px" @change="synSaved"></td><td><button class="btn sm danger" @click="delSyn(s.id)">×</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="card">
-        <h2>Kódtáblák (csak megtekintés)</h2>
-        <div v-for="[k, label, n] in ([['teeth', 'Fogak (FDI)', codes.teeth.length], ['surfaces', 'Felszínek', codes.surfaces.length], ['states', 'Fogállapotok', codes.states.length], ['procedures', 'Kezelések', codes.procedures.length], ['materials', 'Anyagok', codes.materials.length]] as [string, string, number][])" :key="k" style="border-top:1px solid #eef1f3;padding:6px 0">
-          <div class="row" style="cursor:pointer" @click="codeOpen = codeOpen === k ? '' : k"><b>{{ label }}</b><span class="badge b-gray">{{ n }} tétel</span><div class="spacer" /><span>{{ codeOpen === k ? '▴' : '▾' }}</span></div>
-          <div v-if="codeOpen === k" class="small" style="margin-top:6px;line-height:1.7;columns:2 260px">
-            <div v-for="(r, i) in (codes as unknown as Record<string, Record<string, unknown>[]>)[k]" :key="i"><code>{{ r.code }}</code> {{ r.name ?? r.hu }}<template v-if="r.unit"> ({{ r.unit }})</template></div>
-          </div>
-        </div>
-      </div>
-    </template>
+    <!-- kódtáblák és szinonimák (v2.1 5. pont; v2.3 2–5., 10., 13., 15. pont) -->
+    <template v-else-if="tab === 'codes'"><CodesPanel /></template>
+    <template v-else-if="tab === 'dict'"><DictSettings /></template>
+    <template v-else-if="tab === 'train'"><DictTrain /></template>
 
     <!-- kezelési csomagok -->
     <template v-else-if="tab === 'pkg'">
@@ -239,21 +212,6 @@ async function resetDemo() {
             </select>
             <div class="spacer" /><span class="muted">Becsült anyagköltség (1 fog, 1 felszín): <b>{{ fmtFt(inv.pkgCost(t)) }}</b></span>
           </div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="row" style="margin-bottom:10px"><h2 style="margin:0">Fogazati státusz – felismerési szótár</h2><div class="spacer" /><button class="btn sm" @click="addStatusDef">+ Új állapot</button></div>
-        <p class="muted small" style="margin-top:0">A státuszfelvétel üzemmódban ezek alapján ismeri fel a program a fog állapotát. A * végű szó minden ragozott alakra illik.</p>
-        <div class="scroll-x">
-          <table class="t">
-            <thead><tr><th>Állapot</th><th>Kulcsszavak</th></tr></thead>
-            <tbody>
-              <tr v-for="d in st.statusDict" :key="d.id">
-                <td style="width:220px"><input v-model.lazy="d.name" class="inp" @change="saved"></td>
-                <td><input class="inp" :value="d.kw.join(', ')" @change="setKw(d, ($event.target as HTMLInputElement).value)"></td>
-              </tr>
-            </tbody>
-          </table>
         </div>
       </div>
     </template>

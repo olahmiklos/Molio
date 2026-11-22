@@ -64,6 +64,8 @@ export interface Item {
   supplier: string
   kw: string[]
   generic: boolean
+  /** kiszerelés-változatok (pl. 6, 8 → „6-os”, „8-as”): a „három hatos injekció” = 3 db a 6-os változatból (spec v2.3, 5. pont) */
+  variants?: number[]
   /** gyártási szám (LOT) és lejárat nyilvántartása kötelező */
   lotTracked?: boolean
   /** implantátum: a beültetett darab LOT-ja a páciens kartonjába kerül */

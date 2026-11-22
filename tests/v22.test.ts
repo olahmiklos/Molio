@@ -80,8 +80,8 @@ describe('v2.2: üzenetek és Teendők (8. pont)', () => {
 })
 
 describe('v2.2: verziójelzés (3. pont)', () => {
-  it('a verziósor és a másolható adat tartalmazza a v2.2-t', () => {
-    expect(VERSION_LINE).toBe('Demó v2.2 – a specifikáció v2.2 alapján készült')
+  it('a verziósor és a másolható adat tartalmazza a v2.3-at', () => {
+    expect(VERSION_LINE).toBe('Demó v2.3 – a specifikáció v2.3 alapján készült')
     expect(versionReport(6)).toContain('Adatverzió: 6')
   })
 })

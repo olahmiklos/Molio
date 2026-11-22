@@ -4,15 +4,16 @@ import { useDataStore } from '~/stores/data'
 import { useAppointmentStore } from '~/stores/appointment'
 import { usePatientStore } from '~/stores/patient'
 import { useUiStore } from '~/stores/ui'
-import { DAYS, dow, esc, fmtBirth, fmtDate, fmtLong, fmtShort, fromMin, norm, toMin, today } from '~/utils/dates'
-import type { Planned, PlannedItem, RemindChoice } from '~/utils/types'
+import { DAYS, dayDiff, dow, esc, fmtBirth, fmtDate, fmtLong, fmtShort, fromMin, norm, toMin, today } from '~/utils/dates'
+import type { Appointment, Planned, PlannedItem, RemindChoice } from '~/utils/types'
 import { useSuggestionStore } from '~/stores/suggestion'
+import NearApptModal from './NearApptModal.vue'
 import { bufferFor, feeFor, itemFee, riskFor, suggestBufferFlag } from '~/utils/logic'
 import { freeSlots, overlaps, slotsList } from '~/utils/calendar'
 import { analyze } from '~/utils/parser'
 import { allTeeth, teethStr } from '~/utils/teeth'
 import type { PatientDraft } from '../PatientFields.vue'
-import { itemFromSuggestion, lateDue, patientDayCheck, performerOf, schedulable, scheduleRatio } from '~/utils/v22'
+import { DURS, NEAR_DAYS, itemFromSuggestion, lateDue, patientDayCheck, patientFuture, recalcAppt, performerOf, schedulable, scheduleRatio } from '~/utils/v22'
 import { isOverdue, URGENCY } from '~/utils/suggest'
 import { sugSourceText } from '~/utils/v22'
 
@@ -35,7 +36,10 @@ const doctorId = ref(ed?.doctorId || props.doctorId || (sgList[0] ? performerOf(
 const date = ref(ed?.date || props.date || ap.defaultBookingDate())
 const start = ref(ed?.start || props.start || fromMin(db.value.settings.startHour * 60))
 const dur = ref(ed?.dur || 30)
-const durManual = ref(!!ed)
+/** a kezelések összidejéből adódó foglalási idő (30 perces sávra felkerekítve) – 18. pont (B-006) */
+const durFor = (ids: string[]) => { const sum = ids.reduce((s, id) => s + (data.db.types.find(t => t.id === id)?.dur || 0), 0); return sum ? (DURS.find(x => x >= sum) || 300) : 0 }
+/** meglévő foglalásnál csak az eltérő (kézzel átírt) idő számít kézinek; új foglalásnál a kezelés hossza az alap */
+const durManual = ref(ed ? ed.dur !== (durFor(ed.typeIds) || ed.dur) : false)
 const buffer = ref(ed?.buffer || 0)
 const bufManual = ref(!!ed)
 const note = ref(ed?.note || '')
@@ -56,12 +60,14 @@ const hits = computed(() => {
 function startNew() { newP.value = true; draft.value.name = q.value.trim() }
 const lastRec = (pid: string) => patients.lastRecord(pid)
 
-const DURS = [30, 60, 90, 120, 150, 180, 210, 240, 300]
 const typeSum = computed(() => types.value.reduce((s, id) => s + (db.value.types.find(t => t.id === id)?.dur || 0), 0))
+/** a foglalás időtartama mindig a kiválasztott kezelés hossza – akkor is, ha a kezelés már az ablak megnyitásakor ki van választva (immediate) */
+function syncDur() { if (!durManual.value && typeSum.value) dur.value = DURS.find(x => x >= typeSum.value) || 300 }
+function resetDur() { durManual.value = false; syncDur() }
 watch(types, () => {
-  if (!durManual.value && typeSum.value) dur.value = DURS.find(x => x >= typeSum.value) || 300
+  syncDur()
   if (!bufManual.value) buffer.value = bufferFor(db.value, types.value, patient.value || (newP.value ? { needsBuffer: draft.value.needsBuffer } as never : null))
-}, { deep: true })
+}, { deep: true, immediate: true })
 watch([patient, () => draft.value.needsBuffer], () => { if (!bufManual.value) buffer.value = bufferFor(db.value, types.value, patient.value || (newP.value ? { needsBuffer: draft.value.needsBuffer } as never : null)) })
 function toggleType(id: string) { types.value = types.value.includes(id) ? types.value.filter(t => t !== id) : [...types.value, id] }
 
@@ -122,6 +128,14 @@ const risk = computed(() => (patientId.value && date.value ? riskFor(db.value, {
 /* 1. pont: a páciens meglévő időpontjai foglaláskor */
 const dayCheck = computed(() => patientDayCheck(db.value, patientId.value, date.value, start.value, dur.value, props.editId))
 const fmtA = (a: { date: string; start: string; doctorId: string }) => `${fmtDate(a.date)} ${a.start} (${docName(a.doctorId)})`
+const fmtLongA = (a: { date: string; start: string; dur: number; doctorId: string; typeIds: string[] }) => `${fmtShort(a.date)} (${DAYS[dow(a.date) - 1]!.toLowerCase()}) ${a.start}–${fromMin(toMin(a.start) + a.dur)}, ${docName(a.doctorId)} – ${a.typeIds.map(typeById2).join(', ')}`
+const shorter = computed(() => durManual.value && !!typeSum.value && dur.value < typeSum.value)
+/** 19. pont (B-007): a szabad időpont-javaslatban jelzi, ha a páciensnek a napot követő / megelőző 7 napon belül már van időpontja */
+const futureAppts = computed(() => (patientId.value ? patientFuture(db.value, patientId.value, props.editId) : []))
+function nearDay(d: string) {
+  const a = futureAppts.value.find(x => Math.abs(dayDiff(d, x.date)) <= NEAR_DAYS)
+  return a ? `${fmtDate(a.date)} ${a.start} (${docName(a.doctorId)})` : ''
+}
 const suggestFlag = computed(() => (patient.value ? suggestBufferFlag(db.value, patient.value) : false))
 const ovName = computed(() => (ov.value ? db.value.patients.find(p => p.id === ov.value!.patientId)?.name : ''))
 
@@ -129,6 +143,38 @@ watch(msg, v => { if (v) nextTick(() => msgEl.value?.scrollIntoView({ block: 'ce
 function pick(d: string, m: string) { date.value = d; start.value = m }
 function flagPatient() { if (patient.value) { patients.update(patient.value.id, { needsBuffer: true }); bufManual.value = false; buffer.value = bufferFor(db.value, types.value, patient.value); ui.toast('A páciens kartonján bekapcsolva: ráhagyást igényel') } }
 
+const nearAsked = ref(false)
+watch([date, start, patientId], () => { nearAsked.value = false })
+type NearChoice = { kind: 'book' } | { kind: 'back' } | { kind: 'add'; id: string; doctorId: string }
+function askNear(list: Appointment[]) {
+  return new Promise<NearChoice>(resolve => {
+    ui.open(NearApptModal, { list: list.map(a => ({ ...a })), patientName: patient.value?.name || draft.value.name, onDone: (c: NearChoice) => resolve(c) })
+  })
+}
+/** a új kezelés(ek) hozzáadása a meglévő, 7 napon belüli időponthoz; az orvos átváltható, a meglévő foglalás a kezelés idejével meghosszabbodik (18. pont) */
+async function addToExisting(id: string, docId: string): Promise<boolean> {
+  const a = ap.byId(id); if (!a || !patientId.value) return false
+  if (!types.value.length) { msg.value = 'Válassz legalább egy kezelést.'; return false }
+  const keep = JSON.parse(JSON.stringify(a)) as Appointment
+  const add = items.value.map(i => ({ ...i, surfaces: [...i.surfaces], doctorId: docId }))
+  const merged = [...(a.items?.length ? a.items : a.typeIds.map(t => ({ tooth: null, typeId: t, surfaces: [] as never[] }))).map(i => ({ ...i, surfaces: [...i.surfaces], doctorId: docId })), ...add]
+  const apply = (start: string) => { a.doctorId = docId; a.start = start; a.items = merged as never; recalcAppt(db.value, a); a.note = [a.note, note.value.trim()].filter(Boolean).join(' · ') }
+  apply(a.start)
+  const bad = () => overlaps(db.value, a.doctorId, a.date, a.start, a.dur, a.buffer || 0, a.id) || toMin(a.start) + a.dur > db.value.settings.endHour * 60
+  if (bad()) {
+    const alt = slotsList(db.value).map(fromMin).find(st => { a.start = st; return !bad() && toMin(st) + a.dur + (a.buffer || 0) <= db.value.settings.endHour * 60 })
+    if (!alt) { Object.assign(a, keep); msg.value = `A meglévő időpont (${fmtDate(keep.date)}) a hozzáadással ütközne vagy túllógna a rendelési időn, és aznap nincs elég hosszú szabad idő – válassz másik napot.`; return false }
+    const ok = await ui.confirm(`A meglévő időpont a hozzáadással ütközne vagy túllógna a rendelési időn. Aznap a legközelebbi megfelelő időpont: <b>${alt}</b>. Áthelyezed oda?`, 'Áthelyezés', false, 'Vissza')
+    if (!ok) { Object.assign(a, keep); return false }
+    a.start = alt
+  }
+  const ids = picked.value
+  sugs.book(ids, a.id, docId)
+  ui.toast(`Hozzáadva a meglévő időponthoz: ${fmtDate(a.date)} ${a.start} (${docName(docId)}), új időtartam ${a.dur} perc`)
+  ap.calDate = a.date
+  ui.close()
+  return true
+}
 async function save() {
   msg.value = ''
   let pid = patientId.value
@@ -157,6 +203,13 @@ async function save() {
   if (dc.overlap || dc.same.length) {
     const ok = await ui.confirm(`${esc(pp.name)} ugyanazon a napon már rendelkezik időponttal: ${dc.same.map(a => '<b>' + esc(fmtA(a)) + '</b>').join(', ')}${dc.overlap ? '. <b>Az új időpont időben átfedi</b> az egyiket' : ''}. Biztosan újabbat foglalsz? A két időpont összevonható is a mentés után.`, 'Mentés', false, 'Vissza')
     if (!ok) return
+  }
+  // 19. pont: 7 napon belüli másik időpont – felugró ablak a jóváhagyás előtt (mentésenként egyszer)
+  if (dc.near.length && !nearAsked.value) {
+    const ch = await askNear(dc.near)
+    if (ch.kind === 'back') return
+    if (ch.kind === 'add') { if (await addToExisting(ch.id, ch.doctorId)) return; return }
+    nearAsked.value = true
   }
   if (late.value.length) {
     const ok = await ui.confirm(`Határidő-figyelmeztetés: ${late.value.map(l => `<b>${esc(typeById2(l.s.typeId))}</b> javasolt határideje ${fmtDate(l.due)}`).join(', ')} – az időpont ennél később van (${fmtDate(date.value)}). Így is rögzíted?`, 'Rögzítem', false, 'Vissza')
@@ -214,7 +267,7 @@ async function save() {
     <template v-if="patient">
       <div v-if="dayCheck.overlap" class="err"><b>Időben átfedő időpont!</b> {{ patient.name }} ugyanekkor már időponttal rendelkezik: {{ fmtA(dayCheck.overlap) }}.</div>
       <div v-else-if="dayCheck.same.length" class="warn"><b>Ugyanazon a napon már van időpontja:</b> <span v-for="a in dayCheck.same" :key="a.id">{{ fmtA(a) }}; </span>összevonható a mentés után.</div>
-      <div v-if="dayCheck.near.length" class="warn"><b>7 napon belül további időpontja van:</b> <span v-for="a in dayCheck.near" :key="a.id">{{ fmtA(a) }}; </span></div>
+      <div v-if="dayCheck.near.length" class="warn strong" data-test="kozel"><b>⚠ 7 napon belül már van időpontja:</b> <span v-for="a in dayCheck.near" :key="a.id" style="display:inline-block;margin-right:12px">{{ fmtLongA(a) }}</span></div>
       <div v-if="dayCheck.all.length && !dayCheck.same.length && !dayCheck.near.length" class="hint"><b>Meglévő időpont:</b> {{ patient.name }} következő időpontja: {{ fmtA(dayCheck.all[0]!) }}<span v-if="dayCheck.all.length > 1"> (+{{ dayCheck.all.length - 1 }} további)</span>.</div>
       <div v-if="!patient.doctorId" class="hint row">A páciensnek még nincs kezelő orvosa. <button class="btn sm" @click="patients.update(patient!.id, { doctorId } as never); ui.toast('Kezelő orvos: ' + docName(doctorId))">{{ docName(doctorId) }} legyen a kezelő orvosa</button></div>
       <div v-else-if="patient.doctorId !== doctorId" class="hint">Tájékoztatás: a páciens kezelő orvosa <b>{{ docName(patient.doctorId) }}</b>; ehhez az időponthoz <b>{{ docName(doctorId) }}</b> van kiválasztva (a kezelő orvos nem változik).</div>
@@ -285,6 +338,7 @@ async function save() {
         <label class="f">Időtartam</label>
         <select v-model.number="dur" class="inp" @change="durManual = true"><option v-for="m in DURS" :key="m" :value="m">{{ m }} perc</option></select>
         <div v-if="types.length > 1" class="small muted">összesen {{ typeSum }} perc – párhuzamos munkánál rövidebb is lehet</div>
+        <button v-if="durManual && typeSum && dur !== (DURS.find(x => x >= typeSum) || 300)" class="btn sm" style="margin-top:4px" @click="resetDur">Vissza a kezelés szerinti időre</button>
       </div>
       <div class="field">
         <label class="f">Ráhagyás utána</label>
@@ -293,10 +347,14 @@ async function save() {
       </div>
       <div class="field"><label class="f">Megjegyzés az időponthoz</label><input v-model="note" class="inp" placeholder="pl. erős fájdalommal érkezik"></div>
     </div>
+    <div v-if="types.length && date && start" class="hint" data-test="osszesito">
+      <b>{{ types.map(typeById2).join(' + ') }}</b> {{ typeSum }} perc{{ buffer ? ` + ráhagyás ${buffer} perc` : '' }} = <b>{{ dur + buffer }} perc</b> · {{ start }}–{{ fromMin(toMin(start) + dur) }}{{ buffer ? `, ráhagyással ${fromMin(toMin(start) + dur + buffer)}-ig` : '' }}
+    </div>
+    <div v-if="shorter" class="warn" data-test="rovidebb">⚠ A kiválasztott kezelés {{ typeSum }} perces – biztosan {{ dur }} percre foglalod? <span class="muted">(a mentés ettől még engedélyezett)</span></div>
     <div class="field">
       <label class="f">Legközelebbi szabad időpontok ennél az orvosnál <span class="n">(a ráhagyással együtt)</span></label>
       <div class="free">
-        <button v-for="[fd, fm] in free" :key="fd + fm" :class="{ on: fd === date && fm === start }" @click="pick(fd, fm)">{{ fmtShort(fd) }} {{ DAYS[dow(fd) - 1]!.slice(0, 3) }}. {{ fm }}</button>
+        <button v-for="[fd, fm] in free" :key="fd + fm" :class="{ on: fd === date && fm === start, near: nearDay(fd) }" :title="nearDay(fd) ? '7 napon belül már van időpontja: ' + nearDay(fd) : ''" @click="pick(fd, fm)">{{ nearDay(fd) ? '⚠ ' : '' }}{{ fmtShort(fd) }} {{ DAYS[dow(fd) - 1]!.slice(0, 3) }}. {{ fm }}</button>
         <span v-if="!free.length" class="muted">Nincs szabad időpont a következő 2 hónapban.</span>
       </div>
     </div>

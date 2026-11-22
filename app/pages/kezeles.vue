@@ -20,6 +20,8 @@ import StatusToothModal from '~/components/modals/StatusToothModal.vue'
 import ConsentModal from '~/components/modals/ConsentModal.vue'
 import { useOfficeStore } from '~/stores/office'
 import { fmtDate, fmtPrice } from '~/utils/dates'
+import { useDictStore } from '~/stores/dict'
+import type { DictResult } from '~/stores/voice'
 
 const data = useDataStore()
 const tx = useTreatmentStore()
@@ -27,14 +29,19 @@ const voice = useVoiceStore()
 const ui = useUiStore()
 const ap = useAppointmentStore()
 const office = useOfficeStore()
+const dict = useDictStore()
 const db = computed(() => data.db)
 const s = computed(() => tx.s)
 const p = computed(() => tx.patient)
-onMounted(() => voice.detect())
-// a diktálás végén azonnal feldolgozunk: az előnézet (fogak, tételek, anyagok) azonnal kész, csak a ⚠ sorokat kell megerősíteni (spec v2.2, 4. pont)
-watch(() => voice.recording, (v, old) => {
-  if (old && !v && s.value?.mode !== 'status') { tx.finishDictation(); if (tx.toReview) open.mats = true; ui.toast(tx.toReview ? `Az előnézet elkészült – ${tx.toReview} ⚠ sort meg kell erősíteni` : 'Az előnézet elkészült – ellenőrizd, majd mentsd') }
-})
+onMounted(() => { voice.detect(); dict.init() })
+/** a diktálás végén (a Whisper szövegének megérkezése után) azonnal feldolgozunk: az előnézet (fogak, tételek, anyagok) azonnal kész, csak a ⚠ sorokat kell megerősíteni (spec v2.2, 4. pont; v2.3, 7. pont) */
+function dictDone(r: DictResult) {
+  if (s.value?.mode === 'status') return
+  if (r.noSpeech) { ui.toast('Nem érkezett értelmezhető beszéd – kérjük, ismételje meg.'); return }
+  tx.finishDictation(r)
+  if (tx.toReview) { open.mats = true; open.chk = true }
+  ui.toast(tx.toReview ? `Az előnézet elkészült – ${tx.toReview} ⚠ sort meg kell erősíteni` : 'Az előnézet elkészült – ellenőrizd, majd mentsd')
+}
 onBeforeUnmount(() => voice.stop())
 
 const SAMPLES = [
@@ -47,14 +54,18 @@ const SAMPLES = [
 const STATUS_SAMPLE = '18-as és 28-as hiányzik, 16-os korona, 36-os tömött, 46-os gyökérkezelt és koronás, 13-tól 23-ig ép, a többi ép.'
 const STATUS_SAMPLE_PRIMARY = '55-ös szuvas, 64-es tömött, jobb alsó római négyes tömött, a többi ép.'
 
-const open = reactive({ dict: false, type: false, stc: true, sug: true, mats: false, att: false, sum: false, status: true, ster: false, consent: false })
+const open = reactive({ chk: true, dict: false, type: false, stc: true, sug: true, mats: false, att: false, sum: false, status: true, ster: false, consent: false })
 const dtText = computed({ get: () => s.value?.text || '', set: v => tx.setText(v) })
 const stText = computed({ get: () => s.value?.statusText || '', set: v => tx.setStatusText(v) })
 
-function toggleMic() {
+async function toggleMic() {
   if (voice.recording) { voice.stop(); return }
-  if (s.value?.mode === 'status') { open.status = true; voice.start({ get: () => s.value?.statusText || '', set: v => tx.setStatusText(v, 200) }) }
-  else { open.dict = true; voice.start({ get: () => s.value?.text || '', set: v => tx.setText(v, 200) }) }
+  if (voice.processing) return
+  // az első diktálásnál (és időnként, amíg nincs betanítás) felajánljuk a betanítást; kihagyható
+  if (s.value?.mode !== 'status' && dict.shouldOffer() && await ui.confirm('Javasoljuk a <b>diktálás betanítását</b> (kb. 2 perc): megmutatja, hol téveszt a felismerő ezen az eszközön, és személyes javításokat készít. Kihagyható, és a Beállításokban bármikor elindítható.', 'Betanítás indítása', false, 'Most kihagyom')) { navigateTo('/beallitasok?tab=train'); return }
+  const ctx = { prompt: () => tx.promptText(), onDone: dictDone }
+  if (s.value?.mode === 'status') { open.status = true; await voice.start({ get: () => s.value?.statusText || '', set: v => tx.setStatusText(v, 200) }, ctx) }
+  else { open.dict = true; await voice.start({ get: () => s.value?.text || '', set: v => tx.setText(v, 200) }, ctx) }
 }
 function insertSample(t: string) { tx.setText((s.value?.text ? s.value.text.trim() + ' ' : '') + t, 0); open.dict = true }
 function chartClick(n: number) {
@@ -173,18 +184,18 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
       <div class="spacer" />
       <select v-model="s.doctorId" class="inp auto" aria-label="Orvos"><option v-for="d in db.doctors" :key="d.id" :value="d.id">{{ d.name }}</option></select>
       <button v-if="s.mode === 'treat'" class="btn" @click="startStatus">🦷 Státuszfelvétel</button>
-      <button class="mic" :class="{ rec: voice.recording, status: s.mode === 'status' && !voice.recording }" :disabled="!voice.supported" @click="toggleMic">
-        <AppIcon :name="voice.recording ? 'stop' : 'mic'" :size="18" />{{ voice.recording ? `Leállítás (${voice.remaining} s)` : s.mode === 'status' ? 'Státusz diktálása' : 'Diktálás' }}
+      <button class="mic" :class="{ rec: voice.recording, status: s.mode === 'status' && !voice.recording }" :disabled="!voice.supported || voice.processing" @click="toggleMic">
+        <AppIcon :name="voice.recording ? 'stop' : 'mic'" :size="18" />{{ voice.recording ? `Leállítás (${voice.remaining} s)` : voice.processing ? 'Felismerés…' : s.mode === 'status' ? 'Státusz diktálása' : 'Diktálás' }}
       </button>
     </div>
     <div class="ai-note">
-      <b>Demó (2.0):</b> csak szövegfelismerés – a program a böngésző beszédfelismerésével alakítja szöveggé a diktálást, és szabályok alapján tölti ki a mezőket.
+      <b>Demó v2.3:</b> a diktálást a <b>Whisper</b> hangfelismerő alakítja szöveggé a Cloudflare szerverén (szakszó-listával; ha nem érhető el, a böngésző beépített felismerője a tartalék), a mezőket szabályok töltik ki – az AI-értelmezés kapcsolóval kipróbálható.
       Egy felvétel legfeljebb {{ DICTATION_LIMIT_S }} másodperc lehet (a hátralévő idő a gombon látszik); utána újra indíthatod.
-      A mesterséges intelligenciával készülő összefoglaló a későbbi verziókban lesz elérhető. Csak kitalált adatot diktálj: a böngésző a hangot a szolgáltatója szerverére küldheti.
+      A pontos felismeréshez a hang a Cloudflare szerverére kerül feldolgozásra, és nem tárolódik; az élő előnézethez a böngésző szolgáltatója (Apple / Google) is kaphatja. Csak kitalált adatot diktálj.
       <span v-if="!voice.supported"><br><b>Ez a böngésző nem támogatja a diktálást</b> – gépeld be a szöveget (Chrome, Edge vagy Safari ajánlott).</span>
     </div>
     <div v-if="tx.restored && s?.text" class="hint">Mentetlen diktálási piszkozat visszaállítva (7 napig őrizzük, a készletet nem érinti). Mentés után a piszkozat törlődik.</div>
-    <div v-if="voice.recording || voice.message" class="tx-live">{{ voice.recording ? '🎙 ' : '' }}{{ voice.recording && live ? live : voice.message }}</div>
+    <DictBar />
 
     <!-- fogtérkép középen -->
     <div class="tx-chart">
@@ -247,6 +258,12 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
           <textarea v-model="dtText" class="dt" placeholder="Pl.: 36-os fog, meziális és rágófelszíni kompozit tömés. Érzéstelenítés két ampullával, kérek öt tampont…" />
           <div v-if="tx.parsed.orphanSurfaces.length && !s.teeth.length" class="warn" style="margin-top:8px">Felszín hangzott el ({{ tx.parsed.orphanSurfaces.join(', ') }}), de fog nem – jelöld ki a fogat.</div>
         </div>
+      </details>
+
+      <!-- a diktálás ellenőrzése: egyetlen ⚠ lista (v2.3) -->
+      <details class="grp" :class="{ flag: tx.pendingFlags.length }" :open="open.chk" @toggle="open.chk = ($event.target as HTMLDetailsElement).open">
+        <summary><span class="gi" style="background:var(--orange)">⚠</span><span class="gt">Diktálás ellenőrzése</span><span class="gs">{{ tx.pendingFlags.length ? `${tx.pendingFlags.length} megerősítésre vár` : tx.flags.length ? 'minden jelzés rendben' : 'nincs jelzés' }}</span><span v-if="tx.pendingFlags.length" class="flagdot">{{ tx.pendingFlags.length }}</span><span class="chev">▾</span></summary>
+        <div class="gb"><DictReview /></div>
       </details>
 
       <!-- oldal és fogszám ellentmondása (4. pont) -->

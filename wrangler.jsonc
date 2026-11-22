@@ -1,11 +1,20 @@
 {
-  // Cloudflare: a Molio demó statikus oldalként települ (npx nuxt generate → .output/public)
+  // Cloudflare: a Molio demó statikus oldalként települ (npx nuxt generate → .output/public),
+  // előtte egy kis Worker (worker/index.ts) szolgálja ki az /api/* kéréseket (spec v2.3, 7. pont); minden más kérés a statikus fájlokhoz kerül.
   "name": "molio",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-11-17",
+  // Workers AI: kulcs nélkül, a fiók jogán (Whisper hangfelismerés, nyelvi modell az AI-értelmezéshez)
+  "ai": { "binding": "AI" },
   "assets": {
     "directory": ".output/public",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   },
+  // A központi javítási napló (spec v2.3, 5. pont) és a napi AI-keret becslése egy Cloudflare KV névteret használ.
+  // Amíg nincs létrehozva és bekötve, a Worker kecsesen kezeli (a kliens az eszközön várakoztatja a bejegyzéseket). Bekötése:
+  //   npx wrangler kv namespace create MOLIO_LOG   →  a kapott id-t ide: "kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "<id>" }]
   // előnézeti (nem éles) ágak buildjéhez: `wrangler preview` ezt a blokkot várja
   "previews": {}
 }

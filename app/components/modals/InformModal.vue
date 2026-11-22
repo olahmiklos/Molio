@@ -19,10 +19,12 @@ const ctx = computed(() => informContext(db.value, props.patientId, props.apptId
 const hasAppt = computed(() => ctx.value.appts.some(a => ctx.value.suggestions.some(s => s.appointmentId === a.id && s.status === 'booked')))
 const initial = () => (hasAppt.value ? fillInform(db.value, db.value.settings.informTemplate || INFORM_TPL, ctx.value) : coordText(db.value, props.patientId))
 const text = ref(initial())
-const channel = ref(p.value.email ? 'SMS + e-mail' : 'SMS')
+const useSms = ref(!!p.value.phone), useMail = ref(!!p.value.email && !p.value.phone)
+const channel = computed(() => [useSms.value && 'SMS', useMail.value && 'e-mail'].filter(Boolean).join(' + '))
 const reason = ref('')
 const unresolved = computed(() => /\{[^}]+\}/.test(text.value))
 function send() {
+  if (!channel.value) { ui.toast('Válasszon csatornát'); return }
   if (unresolved.value) { ui.toast('A szövegben kitöltetlen mező maradt – javítsd'); return }
   if (hasAppt.value) {
     db.value.informs.push({ id: uid(), patientId: p.value.id, appointmentIds: ctx.value.appts.map(a => a.id), at: new Date().toISOString(), kind: 'sent', channel: channel.value, text: text.value })
@@ -46,11 +48,11 @@ function skip() {
     <div v-else class="hint">Nincs rögzített időpont, ezért tájékoztató nem küldhető. Kézzel indítható udvarias üzenet kéri a pácienst, hogy egyeztessen időpontot (szimulált küldés).</div>
     <div class="field"><label class="f">Üzenet <span class="n">(szerkeszthető küldés előtt)</span></label><textarea v-model="text" class="inp" rows="7" /></div>
     <div v-if="unresolved" class="warn">Kitöltetlen mező maradt a szövegben (kapcsos zárójel) – javítsd küldés előtt.</div>
-    <div class="row"><span class="small muted">Csatorna:</span><select v-model="channel" class="inp auto"><option>SMS</option><option>e-mail</option><option>SMS + e-mail</option></select></div>
+    <div class="field"><label class="f">Csatorna</label><ChannelPicker v-model:sms="useSms" v-model:email="useMail" :phone="p.phone" :mail="p.email" /></div>
     <div v-if="hasAppt" class="row" style="margin-top:10px"><input v-model="reason" class="inp" style="max-width:340px" placeholder="Ha nem szükséges: ok (pl. személyesen megbeszélték)"><button class="btn sm" @click="skip">Nem szükséges</button></div>
     <template #foot>
       <button class="btn" @click="ui.close()">Mégse</button><div class="spacer" />
-      <button class="btn pri" @click="send">{{ hasAppt ? 'Küldés (demó)' : 'Üzenet küldése (demó)' }}</button>
+      <button class="btn pri" :disabled="!channel" :title="channel ? '' : 'Válasszon csatornát'" @click="send">{{ hasAppt ? 'Küldés (demó)' : 'Üzenet küldése (demó)' }}</button>
     </template>
   </ModalShell>
 </template>
