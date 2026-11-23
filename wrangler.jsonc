@@ -13,8 +13,8 @@
     "run_worker_first": ["/api/*"]
   },
   // A központi javítási napló (spec v2.3, 5. pont) és a napi AI-keret becslése egy Cloudflare KV névteret használ.
-  // Amíg nincs létrehozva és bekötve, a Worker kecsesen kezeli (a kliens az eszközön várakoztatja a bejegyzéseket). Bekötése:
-  //   npx wrangler kv namespace create MOLIO_LOG   →  a kapott id-t ide: "kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "<id>" }]
+  // A névtér a Cloudflare-en létrehozva (2026-11-23); a teszt és a main ág közösen használja (a bejegyzések az ágat is rögzítik).
+  "kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "2d8bccd2a8f44c5db01a649141ce5c91" }],
   // előnézeti (nem éles) ágak buildjéhez: `wrangler preview` ezt a blokkot várja
   "previews": {}
 }
