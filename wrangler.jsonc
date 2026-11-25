@@ -15,6 +15,12 @@
   // A központi javítási napló (spec v2.3, 5. pont) és a napi AI-keret becslése egy Cloudflare KV névteret használ.
   // A névtér a Cloudflare-en létrehozva (2026-11-23); a teszt és a main ág közösen használja (a bejegyzések az ágat is rögzítik).
   "kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "2d8bccd2a8f44c5db01a649141ce5c91" }],
-  // előnézeti (nem éles) ágak buildjéhez: `wrangler preview` ezt a blokkot várja
-  "previews": {}
+  // előnézeti (nem éles) ágak (teszt, munkaágak) buildjéhez: `wrangler preview` ezt a blokkot várja.
+  // Az előnézetek NEM öröklik a fenti éles kötéseket (Cloudflare: Previews do not inherit production settings),
+  // ezért az AI és a MOLIO_LOG kötés itt is szerepel; különben minden kitelepítés után a teszt ágon nem működne a diktálás
+  // és a központi napló (hibanapló B-013). A KV névtér szándékosan közös az éles ággal (v2.4 20. pont: egy közös látogatás- és javítási napló).
+  "previews": {
+    "ai": { "binding": "AI" },
+    "kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "2d8bccd2a8f44c5db01a649141ce5c91" }]
+  }
 }
