@@ -723,6 +723,9 @@ export const useTreatmentStore = defineStore('treatment', () => {
     macroHits.value.forEach(h => {
       const m = d.s.macros.find(v => v.id === h.macroId); if (!m) return
       m.uses = (m.uses || 0) + 1; m.lastUsed = new Date().toISOString()
+      // v2.4 15. pont 11.: a rövidítés használata a javítási naplóba kerül (lefutott; módosítani kellett-e)
+      const changed = m.lines.filter(l => l.kind === 'mat' && x.overrides[l.id] !== undefined && x.overrides[l.id] !== (l.qty || 1)).map(l => l.id)
+      d.addLog({ source: 'auto', kind: 'rovidites', raw: '', interpreted: m.name, final: `rövidítés lefutott: ${m.name}${changed.length ? ' – módosítva: ' + changed.join(', ') : ''}`, recognizer: x.dict.recognizer })
       m.lines.filter(l => l.kind === 'mat').forEach(l => {
         const o = x.overrides[l.id]; if (o === undefined || o === (l.qty || 1)) return
         const k = `${l.id}:${o}`; m.mods = { ...(m.mods || {}), [k]: (m.mods?.[k] || 0) + 1 }

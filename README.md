@@ -2,11 +2,11 @@
 
 Fogorvosi rendelőkezelő program diktálással (Nuxt 3 PWA, Pinia, Prisma, PostgreSQL).
 
-> **Készült a `Molio_fogorvosi_szoftver_specifikacio_v2.3` dokumentum alapján**
-> (Molio — Fogorvosi Szoftver — Funkcionális Specifikáció, **v2.3**, utolsó módosítás: 2026. november 22.).
+> **Készült a `Molio_fogorvosi_szoftver_specifikacio_v2.4` dokumentum alapján**
+> (Molio — Fogorvosi Szoftver — Funkcionális Specifikáció, **v2.4**, utolsó módosítás: 2026. november 24.).
 > A verzió és a specifikáció hivatkozása az alkalmazásban is látszik: lábléc és **Beállítások → Névjegy**.
 
-Ez a **2.3 bemutató (demó) verzió**: kitalált mintaadatokkal (Cooldent Kft.), szerver és adatbázis nélkül.
+Ez a **2.4 bemutató (demó) verzió**: kitalált mintaadatokkal (Cooldent Kft.), szerver és adatbázis nélkül.
 Az adatok a böngésző tárolójában (IndexedDB) vannak, ezért a módosítások csak az adott eszközön és böngészőben látszanak.
 A diktálást a Cloudflare Workers AI Whisper-modellje alakítja szöveggé (a böngésző beépített felismerője tartalék és élő előnézet), a mezőket szabályok töltik ki; kísérleti AI-értelmezés kapcsolóval bekapcsolható. A hangfelvétel nem tárolódik.
 
@@ -19,6 +19,13 @@ A diktálást a Cloudflare Workers AI Whisper-modellje alakítja szöveggé (a b
 - **v2.3:** a diktálás pontosítása: szerveroldali Whisper-felismerés (Cloudflare Workers AI, `worker/index.ts`) szakszó-listával, élő előnézet, felvétel- és hangerőjelző, zajszűrés, kitaláció-szűrő; diktálási alapszótár (131 sor) és ismeretlen kifejezések; hasonlóság szerinti egyeztetés; az előjegyzett kezelés és a fogtérkép felhasználása az ellenőrzésben; javítási napló, „Nem ezt mondtam” jelzés, tanuló szabályok; „Diktálás betanítása” és személyes javítások; kísérleti AI-értelmezés; automatikus pontosságmérés (`npm run accuracy`); csatornaválasztó gombok; a fogállapot-szótár a Kódtáblák alatt; B-006 (foglalás időtartama) és B-007 (közeli időpont) javítása; új verzió felugró ablak a main ágon.
 - **v2.0:** beleegyező nyilatkozat tableten aláírva (PDF a kartonba), közérthető páciens-tájékoztató orvosi jóváhagyással, kontroll-meghívók (recall), sterilizációs napló, EESZT-jelentés és számla előkészítése (szemléltetés).
 
+- **v2.4:** main ágon egyszerű, rögzített beállítású diktálás; a teszt ágon „Fejlesztői részletek” panel, Diktálás-labor (próbanapló a KV-ben) és rejtett Látogatások nézet – ezek kódja a main buildből kimarad (`__MOLIO_DEV__`, `pages:extend`); automatikus váltás a böngésző szövegére értelmetlen Whisper-szövegnél; szűrt 16 kHz-es átalakítás és rövid mondatos szakszó-szöveg; „Mai feladat” sáv; öntanuló javítások és személyes rövidítések központi mentéssel; ütközések egymás mellett és Teendőként; összevonás azonos időpontnál; törlés a szerkesztő ablakban; a tájékoztató orvosi jóváhagyása Archívummal; beosztáskezelő (a foglalás a beosztáshoz kötve).
+
+## Kiadás előtti tesztfelvétel (v2.4, 5. pont)
+
+`npm run hangproba -- --url https://teszt-molio.<fiók>.workers.dev` elküldi a `tests/fixtures/hang/` alatti ismert felvételeket (a fejlesztő hangja, betegadat nélkül) a Worker átirat-végpontjára,
+és a Whisper szövegét a `varhato.json` szerinti szöveggel veti össze (szó-szintű egyezés). 80% alatt 2-es kilépési kóddal megáll – a kitelepítés nem folytatódik automatikusan.
+
 ## Felhasználói kézikönyv
 
 A kézikönyv forrása a `docs/kezikonyv.md`. Minden buildnél (`nuxt build` / `nuxt generate`, a `build:before` hookban) a
@@ -30,7 +37,9 @@ a `teszt` ág előnézetében a címlap „teszt-előnézet” jelzést kap. Ké
 ## Cloudflare Worker, Workers AI és KV (v2.3)
 
 A demó statikus Nuxt build marad (`.output/public`), de előtte egy kis Worker (`worker/index.ts`, `wrangler.jsonc`) szolgálja ki az `/api/*` kéréseket:
-`POST /api/diktalas/atiras` (Whisper), `POST /api/diktalas/ertelmezes` (AI-értelmezés), `POST /api/diktalas/naplo` (anonimizált javítási napló), `GET /api/diktalas/keret` (becsült napi keret).
+`POST /api/diktalas/atiras` (Whisper), `POST /api/diktalas/ertelmezes` (AI-értelmezés), `POST /api/diktalas/naplo` (anonimizált javítási napló), `GET /api/diktalas/keret` (becsült napi keret);
+v2.4: `POST|GET /api/diktalas/tanult-javitas` (tanult javítások és rövidítések ágak szerint), `POST|GET /api/diktalas/proba` (próbanapló, csak teszt), `POST /api/latogatas` (látogatás-napló, mindkét ágon), `GET|DELETE /api/latogatas`, `POST /api/latogatas/nev` (csak a teszt gazdagépen).
+A KV ingyenes írás-kerete (kb. 1000 / nap) miatt egy látogatás és egy napló-köteg egy írás, a látogatás-írás napi felső határa ágonként 200, és minden KV-művelet hibatűrő.
 A Workers AI az `AI` bindingen, kulcs nélkül, a fiók jogán érhető el. A központi javítási napló és a keretbecslés egy **KV névteret** (`MOLIO_LOG`) használ;
 amíg ez nincs létrehozva és bekötve, a Worker kecsesen kezeli (a kliens az eszközön várakoztatja a bejegyzéseket). Létrehozás: `npx wrangler kv namespace create MOLIO_LOG`,
 majd a kapott azonosító a `wrangler.jsonc`-ban: `"kv_namespaces": [{ "binding": "MOLIO_LOG", "id": "<id>" }]`.

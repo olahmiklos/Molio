@@ -1,3 +1,4 @@
+// @ts-nocheck – Node-szkript (vite-node), a típusellenőrzés a felületi kódra vonatkozik
 // Kiadás előtti tesztfelvétel (spec v2.4 5. pont, B-009): a repóban verziózott, ismert felvételeket (tests/fixtures/hang/) elküldi a Worker
 // átirat-végpontjára, és a Whisper szövegét a várt átirattal veti össze (szó-szintű egyezés). Megfelelő: legalább kb. 80%.
 // Ennél nagyobb eltérésnél 2-es kilépési kóddal megáll – a kitelepítés a v2.3 16. pont szerinti megállási szabály szerint nem folytatódik automatikusan, a felhasználó dönt.

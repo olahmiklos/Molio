@@ -1,6 +1,8 @@
 // A specifikáció v2.4 tiszta függvényeinek tesztjei (5., 7., 8., 9., 10., 12., 15., 17., 19., 20., 21. pont)
 import { describe, expect, it } from 'vitest'
+// @ts-expect-error – a Node típusdefiníciói nincsenek telepítve (a tesztek Node-ban futnak)
 import { readFileSync } from 'node:fs'
+// @ts-expect-error – lásd fent
 import { join } from 'node:path'
 import { canonTokens, overlapRatio, rating, reliableSuggestion, uncertainWords, uncertaintyStats, veryDifferent, whisperVerdict, wordAccuracy, wordNumber } from '../app/utils/dict/quality'
 import { prepareAudio, resampleFiltered, resampleLinear, toWav } from '../app/utils/dict/audio'
@@ -52,6 +54,7 @@ describe('v2.4 5. pont: a Whisper szövegének használhatósága (B-009)', () =
 })
 
 describe('v2.4 5. és 12. pont: hang, WAV és tesztfelvételek', () => {
+  // @ts-expect-error – __dirname a Node-ban
   const fx = join(__dirname, 'fixtures/hang')
   it('a repóban tárolt tesztfelvételek 16 kHz-es, mono, 16 bites WAV-ok, a fejléc egyezik a tényleges adattal', () => {
     const spec = JSON.parse(readFileSync(join(fx, 'varhato.json'), 'utf8')) as { felvetelek: { fajl: string; szoveg: string }[] }

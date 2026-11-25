@@ -27,6 +27,7 @@ import { isOverdue, sugFee, sugTotal, SUG_STATUS, URGENCY } from '~/utils/sugges
 import { apptPrice } from '~/utils/logic'
 import InformModal from '~/components/modals/InformModal.vue'
 import ApptRemoveModal from '~/components/modals/ApptRemoveModal.vue'
+import { INFO_ARCH_TEXT, infoState } from '~/utils/v24'
 import { draftDaysLeft, liveDrafts, canRestore, restorableUntil, scheduleRatio, sugSourceText, sugsOfRecord } from '~/utils/v22'
 
 const route = useRoute()
@@ -266,7 +267,8 @@ const statusSummary = (teeth: Record<string, string[]>) => {
             <p>{{ r.text || '(nincs leírás)' }}</p>
             <div class="row small" style="margin:6px 0 2px;gap:6px">
               <button class="badge as-btn" :class="r.eeszt?.status === 'sent' ? 'b-green' : 'b-yellow'" @click="ui.open(EesztModal, { recordId: r.id })">EESZT: {{ r.eeszt?.status === 'sent' ? 'beküldve' : 'beküldésre vár' }}</button>
-              <button class="badge as-btn" :class="INFO[r.patientInfo?.status || 'draft']![1]" @click="ui.open(PatientInfoModal, { recordId: r.id })">{{ r.patientInfo ? INFO[r.patientInfo.status]![0] : 'tájékoztató készítése' }}</button>
+              <NuxtLink v-if="infoState(r) !== 'none'" class="badge" :class="infoState(r) === 'sent' ? 'b-blue' : infoState(r) === 'pending' ? 'b-yellow' : 'b-gray'" to="/emlekeztetok?tab=info" :title="'A tájékoztató jóváhagyása a Teendők között'">{{ infoState(r) === 'pending' ? 'tájékoztató: az orvos jóváhagyására vár' : infoState(r) === 'sent' ? 'tájékoztató kiküldve (e-mail)' + (r.patientInfo?.sentAt ? ': ' + fmtDate(r.patientInfo.sentAt.slice(0, 10)) : '') : 'tájékoztató: ' + INFO_ARCH_TEXT[infoState(r)] }}</NuxtLink>
+              <button v-else class="badge as-btn" :class="INFO[r.patientInfo?.status || 'draft']![1]" @click="ui.open(PatientInfoModal, { recordId: r.id })">{{ r.patientInfo ? INFO[r.patientInfo.status]![0] : 'tájékoztató készítése' }}</button>
               <span v-if="r.sterBatch" class="badge b-gray" title="Sterilizálási tétel">♨ {{ r.sterBatch }}</span>
               <button v-if="!db.consents.some(c => c.recordId === r.id) && r.typeIds.some(t => ['tomes', 'gyoker', 'huzas', 'korona', 'implant'].includes(t))" class="badge as-btn b-gray" @click="ui.open(ConsentModal, { patientId: p.id, recordId: r.id, typeIds: r.typeIds, teeth: r.teeth, doctorId: r.doctorId })">✍ nyilatkozat aláíratása</button>
               <span v-if="r.materials.some(m => m.cost)" class="muted">anyagköltség: {{ fmtFt(r.materials.reduce((s, m) => s + (m.cost || 0), 0)) }}</span>
