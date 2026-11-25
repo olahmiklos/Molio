@@ -378,3 +378,45 @@ ul.sum { margin: 0; padding-left: 20px; line-height: 1.75 }
 .chip.disabled:hover { border-color: #dfe5ea; color: #9aa5b1 }
 .channel-picker .chip { min-height: 40px }
 @media (pointer: coarse) { .channel-picker .chip { min-height: 46px; padding: 9px 18px; font-size: 14px } }
+
+/* ---------- v2.4 ---------- */
+.tabbar a .ic { position: relative }
+.tb-badge { position: absolute; top: -4px; right: -10px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--red); color: #fff; font-size: 10px; font-style: normal; line-height: 16px; text-align: center }
+/* v2.4 8. pont: „Mai feladat” sáv a kezelési képernyő tetején */
+.task-bar { position: sticky; top: 0; z-index: 20; background: #fff; border: 1.5px solid #cfe6d7; border-radius: 12px; padding: 8px 12px; margin: 0 0 10px; box-shadow: 0 4px 14px rgba(40, 60, 80, .06) }
+.task-bar .tb-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+.task-bar .tb-main { font-size: 16px; font-weight: 800; color: var(--ink, #23313f) }
+.task-bar .tb-item { display: inline-flex; gap: 6px; align-items: center; margin-right: 10px }
+.task-bar .tb-ok { color: var(--green); font-weight: 700 }
+.task-bar .tb-pend { color: #8a96a3; font-size: 12px }
+.task-bar .tb-not { color: #a1241a; font-size: 12px; font-weight: 700 }
+.task-bar .tb-warn { background: #fdecea; color: #a1241a; border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 12.5px }
+.task-bar .tb-det { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.6 }
+/* v2.4 7. pont: ütköző időpontok egymás mellett */
+.ap.lane { box-sizing: border-box }
+.ap.conflict-buf { outline: 2px dashed #e8344e; outline-offset: -2px }
+.ap.conflict-ok { opacity: .85; outline: 1.5px dotted #c98a8a; outline-offset: -2px }
+.cal .slot.offsched { background: repeating-linear-gradient(135deg, #f3f4f6 0 6px, #e9ecef 6px 12px); cursor: not-allowed }
+.ap.offsched-ap { box-shadow: inset 0 0 0 2px #b07cd8 }
+.conf-banner { display: flex; gap: 10px; align-items: center; background: #fdecea; color: #a1241a; border: 1.5px solid #f3b3bf; border-radius: 10px; padding: 8px 12px; margin: 0 0 10px; font-weight: 700; text-decoration: none }
+/* v2.4 2. pont: halvány AI-jelzés */
+.ai-soft { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: #6b7a89; background: #f2f5f8; border: 1px dashed #c6d0da; border-radius: 8px; padding: 1px 6px; margin-left: 6px; cursor: pointer }
+.learned-mark { font-size: 11.5px; color: #6d4fb3; background: #f4effc; border-radius: 8px; padding: 1px 6px; margin-left: 6px }
+.dev-panel { border: 1.5px dashed #9fb4c8; background: #f7fafc; border-radius: 10px; padding: 8px 12px; margin: 10px 0; font-size: 12.5px }
+.dev-panel summary { cursor: pointer; font-weight: 800; color: #3a5a78 }
+.dev-panel pre { white-space: pre-wrap; word-break: break-word; font-size: 11.5px; background: #fff; border: 1px solid #e3e9ef; border-radius: 6px; padding: 6px 8px; max-height: 360px; overflow: auto }
+.fb-card { border-radius: 12px; padding: 12px 14px; margin: 8px 0; border: 1.5px solid }
+.fb-card.ok { background: #effaf2; border-color: #a9dcb9 }
+.fb-card.warn { background: #fff8e6; border-color: #f0cf7a }
+.fb-card.bad { background: #fdecea; border-color: #f3b3bf }
+.fb-card .fb-h { font-weight: 800; font-size: 15px }
+.wdiff-bad { background: #ffe3e3; border-radius: 3px; padding: 0 2px }
+.wdiff-unc { background: #fff3c4; border-bottom: 1.5px dashed #d99a00 }
+.floor svg { width: 100%; height: auto; max-width: 760px }
+.sched-grid { display: grid; grid-template-columns: 90px repeat(7, minmax(0, 1fr)); gap: 4px; font-size: 12px }
+.sched-grid .sg-h { font-weight: 800; text-align: center }
+.sched-cell { border: 1px solid var(--line); border-radius: 6px; padding: 4px; min-height: 34px; background: #fff; cursor: pointer }
+.sched-cell.on { background: #eaf6ee; border-color: #a9dcb9 }
+.sched-cell.ovr { box-shadow: inset 0 0 0 2px #f0a96a }
+.sched-cell.past { opacity: .5; cursor: default }
+@media (max-width: 700px) { .sched-grid { grid-template-columns: 70px repeat(7, minmax(44px, 1fr)); overflow-x: auto } }

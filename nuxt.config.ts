@@ -7,6 +7,10 @@ const BUILD = {
   branch: process.env.WORKERS_CI_BRANCH || process.env.CF_PAGES_BRANCH || process.env.GITHUB_REF_NAME || sh('git rev-parse --abbrev-ref HEAD'),
   builtAt: new Date().toISOString(),
 }
+/** v2.4 12. pont A): a fejlesztői eszközök (Fejlesztői részletek, Diktálás-labor, Látogatások) csak a nem-main buildbe kerülnek – a main buildből a kódjuk kimarad */
+const DEV_TOOLS = BUILD.branch !== 'main'
+/** csak a teszt / fejlesztői buildben létező oldalak (a main buildben az útvonaluk sem jön létre) */
+const DEV_PAGES = ['/latogatasok']
 
 // Molio – Nuxt 3 PWA
 // A nyilvános demó statikus oldalként készül (`npm run generate` → .output/public), szerver és adatbázis nélkül:
@@ -17,7 +21,7 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   ssr: false,
   modules: ['@pinia/nuxt', '@vite-pwa/nuxt'],
-  vite: { define: { __MOLIO_BUILD__: JSON.stringify(BUILD) } },
+  vite: { define: { __MOLIO_BUILD__: JSON.stringify(BUILD), __MOLIO_DEV__: JSON.stringify(DEV_TOOLS) } },
   css: [
     '@fontsource/raleway/400.css',
     '@fontsource/raleway/500.css',
@@ -57,6 +61,11 @@ export default defineNuxtConfig({
     },
   },
   hooks: {
+    // v2.4 20. pont: a „Látogatások” nézet a main buildben nem létezik (az oldal komponense sem kerül a csomagba)
+    'pages:extend': (pages) => {
+      if (DEV_TOOLS) return
+      for (let i = pages.length - 1; i >= 0; i--) if (DEV_PAGES.includes(pages[i]!.path)) pages.splice(i, 1)
+    },
     // a felhasználói kézikönyv PDF minden buildnél újra elkészül a docs/kezikonyv.md-ből (spec v2.0, 2.10)
     'build:before': async () => {
       const { buildManual } = await import('./scripts/build-manual.mjs')

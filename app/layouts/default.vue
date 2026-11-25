@@ -7,6 +7,8 @@ import { useSuggestionStore } from '~/stores/suggestion'
 import { useAppointmentStore } from '~/stores/appointment'
 import { useRepository } from '~/repositories'
 import { BUILD_DATE_HU, SPEC, VERSION_BADGE, VERSION_LINE, buildInfo } from '~/utils/meta'
+import { logVisit } from '~/utils/visit'
+import { todoAlerts } from '~/utils/v24'
 
 const data = useDataStore()
 const ui = useUiStore()
@@ -70,8 +72,15 @@ async function offerResume() {
   }
 }
 
+/** v2.4 7., 10., 21. pont: a Teendők jelvénye – ütközések, jóváhagyásra váró tájékoztatók, beosztáson kívüli időpontok, lemondást jelzők */
+const alerts = computed(() => todoAlerts(data.db))
+const todoBadge = computed(() => alerts.value.total)
+const todoTitle = computed(() => alerts.value.parts.join(' · '))
+
 onMounted(() => {
   void nextTick(offerResume)
+  // v2.4 20. pont: látogatás naplózása (látogatásonként egyszer; a hiba nem zavar más funkciót)
+  void logVisit()
   // a main ágon 4 óránként háttér-ellenőrzés a nyitott oldalon (előtérbe kerüléskor és betöltéskor is)
   if (isMain) setInterval(() => navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => {}), 4 * 3600 * 1000)
   const set = () => { ui.online = navigator.onLine }
@@ -86,9 +95,7 @@ onMounted(() => {
 
 <template>
   <div>
-    <div class="topbar">
-      <span>{{ st.address }}</span><span>|</span><span>☎ {{ st.phone }}</span><span>|</span><span>Rendelés: hétfő–péntek {{ st.startHour }}:00–{{ st.endHour }}:00</span><span>|</span><NuxtLink to="/sugo" style="color:inherit;font-weight:700">? Súgó és kézikönyv</NuxtLink>
-    </div>
+    <!-- v2.4 22. pont: a rendelő adatsora (cím, telefon, rendelési idő, Súgó link) a fejlécből kikerült; a Súgó a Beállításokból érhető el -->
     <header class="hdr">
       <NuxtLink to="/" class="brand">
         <img src="/logo.svg" alt="">
@@ -99,13 +106,14 @@ onMounted(() => {
       </NuxtLink>
       <nav class="nav">
         <NuxtLink v-for="n in nav" :key="n.to" :to="n.to" :class="{ on: n.match(route.path) }">
-          {{ n.label }}<span v-if="n.to === '/kezeles' && tx.active" class="flagdot" style="margin-left:6px;background:var(--pink)">●</span>
+          {{ n.label }}<span v-if="n.to === '/kezeles' && tx.active" class="flagdot" style="margin-left:6px;background:var(--pink)">●</span><span v-if="n.to === '/emlekeztetok' && todoBadge" class="flagdot" style="margin-left:6px" :title="todoTitle" data-test="teendo-jelveny">{{ todoBadge }}</span>
         </NuxtLink>
       </nav>
     </header>
     <div class="demobar">
       <b>Bemutató verzió.</b>
       <span>Csak kitalált adatot rögzíts. A módosítások csak <b>ezen az eszközön és ebben a böngészőben</b> frissülnek és látszanak, más eszközön a demó a saját mintaadataival indul.</span>
+      <span data-test="latogatas-tajekoztato">A bemutató a látogatás idejét és az IP-címet naplózza.</span>
       <span v-if="!ui.online" class="badge b-yellow">offline – a diktáláshoz internet kell, a szöveg gépelhető</span>
     </div>
     <NuxtLink v-if="inv.alerts.length" to="/raktar" class="alertbar">
@@ -142,7 +150,7 @@ onMounted(() => {
     </footer>
     <nav class="tabbar">
       <NuxtLink v-for="n in nav" :key="n.to" :to="n.to" :class="{ on: n.match(route.path) }">
-        <span class="ic"><AppIcon :name="n.icon" :size="22" /></span>{{ n.short }}
+        <span class="ic"><AppIcon :name="n.icon" :size="22" /><i v-if="n.to === '/emlekeztetok' && todoBadge" class="tb-badge">{{ todoBadge }}</i></span>{{ n.short }}
       </NuxtLink>
     </nav>
 

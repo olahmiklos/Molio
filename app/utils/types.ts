@@ -49,7 +49,39 @@ export interface Synonym { id: string; from: string; to: string; group: string }
 
 export interface MsgTemplate { id: string; name: string; text: string }
 
-export interface Doctor { id: string; name: string }
+export interface Doctor {
+  id: string
+  name: string
+  /** v2.4 21. pont: megjelenő szín a naptárban és a beosztásban, kijelölt rendelő, hozzárendelt asszisztensek, inaktív orvos */
+  color?: string
+  roomId?: string
+  assistantIds?: string[]
+  active?: boolean
+}
+
+/* ---------- v2.4 21. pont: beosztás ---------- */
+/** egy időszak 30 perces rácson: ['10:00', '20:00'] */
+export type Period = [string, string]
+/** heti sablon: a hét napja (1 = hétfő … 7 = vasárnap) → időszakok; üres lista = szabad nap */
+export type WeekTpl = Record<string, Period[]>
+export interface StaffPerson { id: string; name: string; active: boolean }
+/** napi eltérés a sablontól: az adott napra a sablon helyett érvényes (üres lista = nincs rendelés / nincs műszak) */
+export interface DayOverride { personId: string; kind: 'doctor' | 'reception' | 'assistant'; date: string; periods: Period[]; at: string }
+/** asszisztens napi beosztása egy orvos mellé (ha nincs megadva: az orvoshoz rendelt asszisztens a rendelési időben) */
+export interface AssistantDay { assistantId: string; doctorId: string; date: string; periods: Period[] }
+export interface Schedule {
+  doctor: Record<string, WeekTpl>
+  reception: Record<string, WeekTpl>
+  overrides: DayOverride[]
+  assistantDays: AssistantDay[]
+  /** a beosztáson kívüli foglalás sürgős felülbírálásainak naplója */
+  overrideLog: { at: string; apptId: string; by: string; reason: string }[]
+}
+export interface Staff {
+  assistants: StaffPerson[]
+  receptionists: StaffPerson[]
+  waiting: { id: string; name: string }[]
+}
 
 export interface Item {
   id: string
@@ -157,6 +189,12 @@ export interface Appointment {
   replies?: { id: string; at: string; text: string; done?: boolean }[]
   /** összevonás: a ide beolvasztott időpontok azonosítói (spec v2.2, 2. pont) */
   mergedFrom?: string[]
+  /** v2.4 7. pont: „szándékos átfedés” – ezekkel az időpontokkal az átfedést valaki jóváhagyta */
+  overlapOk?: { id: string; at: string; by: string }[]
+  /** v2.4 9., 21. pont: az időpont naplója (összevonás, visszavonás, sürgős felülbírálás) */
+  log?: { at: string; by: string; note: string }[]
+  /** v2.4 21. pont: sürgős eset – a beosztáson kívüli foglalás indoklással felülbírálva */
+  urgent?: { reason: string; by: string; at: string }
 }
 
 /** foglalt tétel: fog, művelet, felszín; javasolt eredetű tételnél a javaslat azonosítója és a végző orvos (spec v2.2, 6–7. pont) */
@@ -243,6 +281,8 @@ export interface TreatmentRecord {
   items?: VisitItem[]
   /** utólagos módosítások naplója (ki, mikor) */
   editLog?: { at: string; by: string; note: string }[]
+  /** v2.4 8. pont: a tervezett, de szándékosan el nem végzett tételek („Nem történt meg”) – a következő alkalom „következő lépése” */
+  notDone?: { tooth: number | null; typeId: string; note: string }[]
 }
 
 export interface PatientInfo {
@@ -252,6 +292,18 @@ export interface PatientInfo {
   approvedAt?: string
   sentAt?: string
   channels?: string[]
+  /** v2.4 10. pont: jóváhagyási feladat keletkezett (a páciens e-mailes értesítést kér, és van e-mail-címe) */
+  queued?: boolean
+  /** a jóváhagyás határideje (a kezelés napjától / a visszahozás napjától számított 7 nap) */
+  deadline?: string
+  /** archívum: lejárt jóváhagyás nélkül / az orvos nem tartotta szükségesnek */
+  archived?: 'expired' | 'declined'
+  archivedAt?: string
+  declineReason?: string
+  /** az orvos küldés előtt módosította a szöveget */
+  edited?: boolean
+  /** napló: ki, mikor, mit (jóváhagyás, küldés, mellőzés, visszahozás) */
+  log?: { at: string; by: string; what: string }[]
 }
 
 export interface StatusSnapshot {
@@ -446,4 +498,7 @@ export interface DB {
   deleted: DeletedAppt[]
   drafts: Draft[]
   informs: InformLog[]
+  /** v2.4 21. pont: személyzet (asszisztensek, recepciósok, várótermek) és beosztás; a régi adatoknál hiányzik (betöltéskor pótlódik) */
+  staff?: Staff
+  schedule?: Schedule
 }

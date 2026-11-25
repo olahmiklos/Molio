@@ -133,7 +133,8 @@ export function seed(): DB {
     k++
   }
   // a gyerekpáciensek időpontjai
-  const nextWorkday = (from: string) => { let d = from; while (dow(d) > 5) d = addDays(d, 1); return d }
+  // v2.4 21. pont: az alap-beosztás kedd–péntek, ezért a mintaidőpontok is erre a négy napra kerülnek
+  const nextWorkday = (from: string) => { let d = from; while (dow(d) > 5 || dow(d) < 2) d = addDays(d, 1); return d }
   db.appointments.push({ id: uid(), patientId: pt(8).id, doctorId: 'olah', roomId: ROOM_ID, date: nextWorkday(addDays(t0, 3)), start: '10:00', dur: 60, buffer: 0, typeIds: ['tomes'], note: 'Szülő kíséri', remind: { sms: true, email: true, timing: '24' }, created: t0, planned: { teeth: [75], surfaces: { 75: ['O'] } } })
   db.appointments.push({ id: uid(), patientId: pt(9).id, doctorId: 'csempesz', roomId: ROOM_ID, date: nextWorkday(addDays(t0, 6)), start: '10:30', dur: 30, buffer: 0, typeIds: ['kontroll'], note: '', remind: { sms: true, email: false, timing: '24' }, created: t0 })
 
@@ -141,7 +142,7 @@ export function seed(): DB {
   const extraTypes = ['kontroll', 'tomes', 'fogko', 'kontroll', 'tomes', 'gyoker', 'kontroll', 'tomes']
   let e = 0
   for (let d = addDays(t0, -10); d <= addDays(t0, 21); d = addDays(d, 1)) {
-    if (dow(d) > 5) continue
+    if (dow(d) > 5 || dow(d) < 2) continue
     const n = 2 + (e % 2)
     for (let j = 0; j < n; j++, e++) {
       const type = extraTypes[e % extraTypes.length]!

@@ -1,15 +1,15 @@
 // A program verziója és a specifikáció, amely alapján készült
 declare const __MOLIO_BUILD__: { commit: string; branch: string; builtAt: string } | undefined
 
-export const APP_VERSION = '2.3.0'
-/** a verziójelzés alapja: demó v2.3, a specifikáció v2.3 alapján */
-export const APP_LABEL = 'Molio – bemutató (demó) verzió v2.3'
+export const APP_VERSION = '2.4.0'
+/** a verziójelzés alapja: demó v2.4, a specifikáció v2.4 alapján */
+export const APP_LABEL = 'Molio – bemutató (demó) verzió v2.4'
 export const SPEC = {
-  title: 'Molio_fogorvosi_szoftver_specifikacio_v2.3',
+  title: 'Molio_fogorvosi_szoftver_specifikacio_v2.4',
   name: 'Molio — Fogorvosi Szoftver — Funkcionális Specifikáció',
-  version: 'v2.3',
+  version: 'v2.4',
   /** a specifikáció utolsó módosítása */
-  date: '2026. november 22.',
+  date: '2026. november 24.',
 }
 
 /** a buildkor (nuxt.config.ts) a ténylegesen fordított kódból kerül be: build ideje, ág és commit; nem kézzel írt szöveg */
@@ -20,6 +20,12 @@ export function buildInfo(): BuildInfo {
   const env: BuildInfo['env'] = b.branch === 'main' ? 'DEMÓ' : b.branch ? 'TESZT' : 'FEJLESZTŐI'
   return { commit: b.commit, short: b.commit.slice(0, 7), branch: b.branch, builtAt: b.builtAt, env }
 }
+/** v2.4 4., 12., 20. pont: a fejlesztői rétegek (Fejlesztői részletek, Diktálás-labor, Látogatások) csak a nem-main buildben vannak.
+ * Fordításkor (nuxt.config.ts → vite define) dől el: a main buildben `false`, így a hozzá tartozó kód a csomagból kimarad. */
+declare const __MOLIO_DEV__: boolean | undefined
+export const DEV_TOOLS: boolean = typeof __MOLIO_DEV__ !== 'undefined' ? __MOLIO_DEV__ : buildInfo().env !== 'DEMÓ'
+/** a látogatási naplóban és a központi mentésben használt ágjelölés */
+export const BRANCH_TAG = (): 'main' | 'teszt' => (buildInfo().env === 'DEMÓ' ? 'main' : 'teszt')
 const HU_DATE = (iso: string) => new Intl.DateTimeFormat('hu-HU', { timeZone: 'Europe/Budapest', year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(iso))
 const HU_TIME = (iso: string) => new Intl.DateTimeFormat('hu-HU', { timeZone: 'Europe/Budapest', hour: '2-digit', minute: '2-digit' }).format(new Date(iso))
 const ISO_DAY = (iso: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Budapest' }).format(new Date(iso))
@@ -27,9 +33,9 @@ const ISO_DAY = (iso: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'E
 export const BUILD_DATE = ISO_DAY(buildInfo().builtAt)
 export const BUILD_DATE_HU = HU_DATE(buildInfo().builtAt)
 export const BUILD_TIME_HU = `${HU_DATE(buildInfo().builtAt)} ${HU_TIME(buildInfo().builtAt)}`
-/** a felületi verziójelzés: „Demó v2.3 – a specifikáció v2.3 alapján készült” (a build dátumával együtt jelenik meg) */
+/** a felületi verziójelzés: „Demó v2.4 – a specifikáció v2.4 alapján készült” (a build dátumával együtt jelenik meg) */
 export const VERSION_LINE = `Demó v${APP_VERSION.replace(/\.0$/, '')} – a specifikáció ${SPEC.version} alapján készült`
-/** rövid jelvény a láblécben és a bejelentkezési képernyőn: „v2.3 · spec 2.3 · 2026-11-22” */
+/** rövid jelvény a láblécben és a bejelentkezési képernyőn: „v2.4 · spec 2.4 · 2026-11-25” */
 export const VERSION_BADGE = `v${APP_VERSION.replace(/\.0$/, '')} · spec ${SPEC.version.slice(1)} · ${BUILD_DATE}`
 /** a verzióadatok másolható, szöveges formában (hibabejelentéshez) */
 export function versionReport(dataVersion: number): string {
