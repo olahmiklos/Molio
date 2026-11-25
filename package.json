@@ -10,6 +10,7 @@
   },
   "scripts": {
     "accuracy": "vite-node scripts/accuracy.ts",
+    "hangproba": "vite-node scripts/hangproba.ts",
     "dev": "nuxt dev",
     "build": "nuxt build",
     "generate": "nuxt generate",

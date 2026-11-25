@@ -8,6 +8,11 @@ import { DAYS, dayDiff, dow, esc, fmtBirth, fmtDate, fmtLong, fmtShort, fromMin,
 import type { Appointment, Planned, PlannedItem, RemindChoice } from '~/utils/types'
 import { useSuggestionStore } from '~/stores/suggestion'
 import NearApptModal from './NearApptModal.vue'
+import ApptSameModal, { type SameChoice } from './ApptSameModal.vue'
+import ApptRemoveModal from './ApptRemoveModal.vue'
+import { isWorking, notWorkingText } from '~/utils/schedule'
+import { logAppt, mergePlan } from '~/utils/v24'
+import { recordForAppt } from '~/utils/logic'
 import { bufferFor, feeFor, itemFee, riskFor, suggestBufferFlag } from '~/utils/logic'
 import { freeSlots, overlaps, slotsList } from '~/utils/calendar'
 import { analyze } from '~/utils/parser'
@@ -122,8 +127,12 @@ const typeById2 = (id: string) => db.value.types.find(t => t.id === id)?.name ||
 const slots = computed(() => slotsList(db.value))
 const free = computed(() => freeSlots(db.value, doctorId.value, dur.value, buffer.value, 10, props.editId))
 const ov = computed(() => (date.value && start.value ? overlaps(db.value, doctorId.value, date.value, start.value, dur.value, buffer.value, props.editId) : undefined))
-const lateEnd = computed(() => toMin(start.value) + dur.value > db.value.settings.endHour * 60)
-const bufOver = computed(() => !lateEnd.value && toMin(start.value) + dur.value + buffer.value > db.value.settings.endHour * 60)
+/* v2.4 21. pont: a foglalás a beosztáshoz kötött – a teljes időtartam (kezelés + ráhagyás) a rendelési időszakon belülre kell essen */
+const offWork = computed(() => !!date.value && !!start.value && !isWorking(db.value, doctorId.value, date.value, start.value, dur.value + buffer.value))
+const offText = computed(() => (offWork.value ? notWorkingText(db.value, doctorId.value, date.value) : ''))
+const nextFree = computed(() => (offWork.value ? freeSlots(db.value, doctorId.value, dur.value, buffer.value, 1, props.editId, date.value)[0] || null : null))
+const urgent = ref(!!ed?.urgent)
+const urgentReason = ref(ed?.urgent?.reason || '')
 const risk = computed(() => (patientId.value && date.value ? riskFor(db.value, { patientId: patientId.value, date: date.value, start: start.value, created: today(), remind: rem.value }) : null))
 /* 1. pont: a páciens meglévő időpontjai foglaláskor */
 const dayCheck = computed(() => patientDayCheck(db.value, patientId.value, date.value, start.value, dur.value, props.editId))
@@ -160,9 +169,9 @@ async function addToExisting(id: string, docId: string): Promise<boolean> {
   const merged = [...(a.items?.length ? a.items : a.typeIds.map(t => ({ tooth: null, typeId: t, surfaces: [] as never[] }))).map(i => ({ ...i, surfaces: [...i.surfaces], doctorId: docId })), ...add]
   const apply = (start: string) => { a.doctorId = docId; a.start = start; a.items = merged as never; recalcAppt(db.value, a); a.note = [a.note, note.value.trim()].filter(Boolean).join(' · ') }
   apply(a.start)
-  const bad = () => overlaps(db.value, a.doctorId, a.date, a.start, a.dur, a.buffer || 0, a.id) || toMin(a.start) + a.dur > db.value.settings.endHour * 60
+  const bad = () => overlaps(db.value, a.doctorId, a.date, a.start, a.dur, a.buffer || 0, a.id) || !isWorking(db.value, a.doctorId, a.date, a.start, a.dur + (a.buffer || 0))
   if (bad()) {
-    const alt = slotsList(db.value).map(fromMin).find(st => { a.start = st; return !bad() && toMin(st) + a.dur + (a.buffer || 0) <= db.value.settings.endHour * 60 })
+    const alt = slotsList(db.value).map(fromMin).find(st => { a.start = st; return !bad() })
     if (!alt) { Object.assign(a, keep); msg.value = `A meglévő időpont (${fmtDate(keep.date)}) a hozzáadással ütközne vagy túllógna a rendelési időn, és aznap nincs elég hosszú szabad idő – válassz másik napot.`; return false }
     const ok = await ui.confirm(`A meglévő időpont a hozzáadással ütközne vagy túllógna a rendelési időn. Aznap a legközelebbi megfelelő időpont: <b>${alt}</b>. Áthelyezed oda?`, 'Áthelyezés', false, 'Vissza')
     if (!ok) { Object.assign(a, keep); return false }
@@ -173,6 +182,48 @@ async function addToExisting(id: string, docId: string): Promise<boolean> {
   ui.toast(`Hozzáadva a meglévő időponthoz: ${fmtDate(a.date)} ${a.start} (${docName(docId)}), új időtartam ${a.dur} perc`)
   ap.calDate = a.date
   ui.close()
+  return true
+}
+/* ---------- v2.4 9. pont (B-011): azonos páciens, azonos / átfedő idő → összevonás egy időponttá ---------- */
+function askSame(appt: Appointment) {
+  return new Promise<SameChoice>(resolve => { ui.open(ApptSameModal, { appt: { ...appt }, patientName: patient.value?.name || draft.value.name, onDone: (c: SameChoice) => resolve(c) }) })
+}
+/** összevonás: a meglévő időpont tételei megmaradnak, az új kezelés hozzáadódik; soha nem ír felül másik kezelést; visszavonható */
+async function mergeInto(id: string): Promise<boolean> {
+  const a = ap.byId(id); if (!a) return false
+  let docId = a.doctorId
+  if (doctorId.value !== a.doctorId) {
+    // egy időpont – egy orvos: a program rákérdez, melyik orvos maradjon
+    const keepOld = await ui.confirm(`Az új kezeléshez <b>${esc(docName(doctorId.value))}</b> van kiválasztva, a meglévő időpont orvosa <b>${esc(docName(a.doctorId))}</b>. Egy időponthoz egy orvos tartozik – melyik orvos maradjon?`, docName(a.doctorId), false, docName(doctorId.value))
+    docId = keepOld ? a.doctorId : doctorId.value
+  }
+  const snap = JSON.parse(JSON.stringify(a)) as Appointment
+  const sugSnap = db.value.suggestions.map(g => ({ id: g.id, status: g.status, appointmentId: g.appointmentId, performerId: g.performerId }))
+  const plan = mergePlan(db.value, a, { items: items.value.map(i => ({ ...i, surfaces: [...i.surfaces] })), typeIds: [...types.value], buffer: buffer.value }, docId)
+  const fits = (st: string) => !overlaps(db.value, docId, a.date, st, plan.dur, plan.buffer, a.id) && isWorking(db.value, docId, a.date, st, plan.dur + plan.buffer)
+  let st = a.start
+  if (!fits(st)) {
+    const alt = slotsList(db.value).map(fromMin).find(fits)
+    if (!alt) { msg.value = `Az összevont időpont (${plan.dur} perc${plan.buffer ? ' + ' + plan.buffer + ' perc ráhagyás' : ''}) ütközne a következő időponttal vagy túllógna a rendelési időn, és aznap nincs elég hosszú szabad idő – válassz másik napot, vagy „Külön időpont”.`; return false }
+    if (!(await ui.confirm(`Az összevont időpont ütközne a következő időponttal vagy túllógna a rendelési időn. Aznap a legközelebbi megfelelő kezdés: <b>${alt}</b>. Áthelyezed oda?`, 'Áthelyezés', false, 'Vissza'))) return false
+    st = alt
+  }
+  const teeth = [...new Set(plan.items.map(i => i.tooth).filter((n): n is number => !!n))]
+  const surfaces: Record<number, ('M' | 'O' | 'D' | 'V' | 'L')[]> = {}
+  plan.items.forEach(i => { if (i.tooth && i.surfaces.length) surfaces[i.tooth] = [...new Set([...(surfaces[i.tooth] || []), ...i.surfaces])] })
+  Object.assign(a, { items: plan.items, typeIds: plan.typeIds, dur: plan.dur, buffer: plan.buffer, doctorId: docId, start: st, planned: teeth.length ? { teeth, surfaces } : a.planned, note: [a.note, note.value.trim()].filter(Boolean).join(' · ') })
+  sugs.book(picked.value, a.id, docId)
+  logAppt(a, 'asszisztens', `összevonás: ${types.value.map(typeById2).join(', ')} hozzáadva (${snap.dur} → ${a.dur} perc)`)
+  if (a.sentAt && await ui.confirm('A páciens erről az időpontról már kapott értesítést. Küldjünk értesítést a módosításról? <span class="small">(Demó: tényleges küldés nélkül.)</span>', 'Értesítés küldése', false, 'Nem')) { a.sentAt = new Date().toISOString(); logAppt(a, 'asszisztens', 'módosításról szóló értesítés kiküldve (szimulált)') }
+  ap.calDate = a.date
+  ui.close()
+  ui.toast(`Összevonva: ${fmtDate(a.date)} ${a.start} (${docName(docId)}), új időtartam ${a.dur} perc`, { label: 'Visszavonás', fn: () => {
+    const cur = ap.byId(id); if (!cur) return
+    Object.keys(cur).forEach(k => { if (!(k in snap)) delete (cur as unknown as Record<string, unknown>)[k] })
+    Object.assign(cur, snap); logAppt(cur, 'asszisztens', 'összevonás visszavonva')
+    sugSnap.forEach(x => { const g = db.value.suggestions.find(y => y.id === x.id); if (g) Object.assign(g, { status: x.status, appointmentId: x.appointmentId, performerId: x.performerId }) })
+    ui.toast('Az összevonás visszavonva – mindkét kezelés az eredeti helyére került')
+  } })
   return true
 }
 async function save() {
@@ -195,13 +246,19 @@ async function save() {
   pp.remind = { sms: rem.value.sms, email: rem.value.email }
   if (!types.value.length) { msg.value = 'Válassz legalább egy kezelést.'; return }
   if (!date.value) { msg.value = 'Add meg a dátumot.'; return }
-  if (dow(date.value) > 5) { msg.value = 'Hétvégére nem lehet foglalni.'; return }
-  if (lateEnd.value) { msg.value = 'A kezelés a rendelési idő után érne véget.'; return }
-  if (bufOver.value) { msg.value = 'A ráhagyás a rendelési idő után érne véget – rövidítsd vagy hagyd el.'; return }
+  if (offWork.value && !urgent.value) { msg.value = `${offText.value}.${nextFree.value ? ` Legközelebbi rendelési idő szabad hellyel: ${fmtDate(nextFree.value[0])} ${nextFree.value[1]}.` : ''} Sürgős esetben a tiltás indoklással felülbírálható.`; return }
+  if (offWork.value && urgent.value && !urgentReason.value.trim()) { msg.value = 'Sürgős esetben a beosztáson kívüli foglaláshoz indoklás szükséges.'; return }
   if (otherDoc.value.length) { msg.value = `Egy időponthoz egy orvos tartozik: ${otherDoc.value.map(g => (typeById2(g.typeId))).join(', ')} végző orvosa más, mint az időpont orvosa (${docName(doctorId.value)}). Állítsd át a tétel orvosát, vagy vedd ki az időpontból.`; return }
   const dc = dayCheck.value
-  if (dc.overlap || dc.same.length) {
-    const ok = await ui.confirm(`${esc(pp.name)} ugyanazon a napon már rendelkezik időponttal: ${dc.same.map(a => '<b>' + esc(fmtA(a)) + '</b>').join(', ')}${dc.overlap ? '. <b>Az új időpont időben átfedi</b> az egyiket' : ''}. Biztosan újabbat foglalsz? A két időpont összevonható is a mentés után.`, 'Mentés', false, 'Vissza')
+  let separate = false
+  if (dc.overlap && !ed) {
+    // v2.4 9. pont: a mentés soha nem írhat felül másik időpontot – azonos páciensnél összevonás vagy külön időpont
+    const ch = await askSame(dc.overlap)
+    if (ch === 'back') return
+    if (ch === 'merge') { await mergeInto(dc.overlap.id); return }
+    separate = true
+  } else if (dc.overlap || dc.same.length) {
+    const ok = await ui.confirm(`${esc(pp.name)} ugyanazon a napon már rendelkezik időponttal: ${dc.same.map(a => '<b>' + esc(fmtA(a)) + '</b>').join(', ')}${dc.overlap ? '. <b>Az új időpont időben átfedi</b> az egyiket' : ''}. Biztosan így mented? A két időpont összevonható is a mentés után.`, 'Mentés', false, 'Vissza')
     if (!ok) return
   }
   // 19. pont: 7 napon belüli másik időpont – felugró ablak a jóváhagyás előtt (mentésenként egyszer)
@@ -216,17 +273,25 @@ async function save() {
     if (!ok) return
   }
   const conflict = ov.value
-  if (conflict) {
+  if (conflict && !(separate && conflict.patientId === pid)) {
     // ütközésnél nem tiltjuk a mentést: egyszer figyelmeztetünk, aztán a döntés az asszisztensé (6. pont)
     const key = [doctorId.value, date.value, start.value, dur.value, buffer.value].join('|')
     const ok = await ui.confirm(`Ez az időpont ütközik: <b>${esc(ovName.value || '')}</b> ${conflict.start}–${fromMin(toMin(conflict.start) + conflict.dur)}. Mentsd így, vagy menj vissza és válassz másik időpontot.`, 'Mentés ütközéssel', false, 'Vissza')
     warnedKey.value = key
     if (!ok) return
   }
-  const body = { patientId: pid, doctorId: doctorId.value, date: date.value, start: start.value, dur: dur.value, buffer: buffer.value, typeIds: [...types.value], note: note.value.trim(), remind: { ...rem.value }, planned: planned.value, items: items.value.map(i => ({ ...i, surfaces: [...i.surfaces], doctorId: doctorId.value })) }
+  const urg = offWork.value && urgent.value ? { reason: urgentReason.value.trim(), by: 'asszisztens / orvos', at: new Date().toISOString() } : undefined
+  const body = { patientId: pid, doctorId: doctorId.value, date: date.value, start: start.value, dur: dur.value, buffer: buffer.value, typeIds: [...types.value], note: note.value.trim(), remind: { ...rem.value }, planned: planned.value, items: items.value.map(i => ({ ...i, surfaces: [...i.surfaces], doctorId: doctorId.value })), urgent: urg }
   let savedId = ed?.id || ''
   if (ed) { const old = `${fmtDate(ed.date)} ${ed.start}`; ap.update(ed.id, body); ui.toast(`Időpont módosítva: ${old} → ${fmtDate(date.value)} ${start.value}`) }
-  else { const na = ap.create(body); savedId = na.id; ui.toast(`Időpont lefoglalva: ${fmtDate(date.value)} ${start.value}`) }
+  else {
+    const na = ap.create(body); savedId = na.id
+    if (separate) {
+      logAppt(na, 'asszisztens', 'külön időpontként mentve (azonos páciens, átfedő idő)')
+      ui.toast(`Külön időpontként lefoglalva: ${fmtDate(date.value)} ${start.value}`, { label: 'Visszavonás', fn: () => { db.value.suggestions.filter(g => g.appointmentId === na.id && g.status === 'booked').forEach(g => { g.status = 'new'; g.appointmentId = null }); db.value.appointments = db.value.appointments.filter(x => x.id !== na.id); ui.toast('A foglalás visszavonva') } })
+    } else ui.toast(`Időpont lefoglalva: ${fmtDate(date.value)} ${start.value}`)
+  }
+  if (urg && savedId) { db.value.schedule?.overrideLog.push({ at: urg.at, apptId: savedId, by: urg.by, reason: urg.reason }); const sa = ap.byId(savedId); if (sa) logAppt(sa, urg.by, 'sürgős eset – beosztáson kívüli foglalás: ' + urg.reason) }
   if (savedId) {
     // a kijelölt javasolt tételek ehhez az időponthoz kötődnek; amit levettek, újra nyitott lesz (részleges ütemezés)
     const ids = picked.value
@@ -235,7 +300,7 @@ async function save() {
     const r = patientId.value ? scheduleRatio(db.value, patientId.value) : null
     if (r && r.total > 1 && ids.length) ui.toast(`${r.total} javasolt tételből ${r.scheduled} ütemezve${r.open.length ? ', ' + r.open.length + ' még egyeztetendő' : ''}`)
   }
-  if (conflict) ui.toast(`Mentve – ütközik: ${ovName.value} ${conflict.start}`)
+  if (conflict && !separate) ui.toast(`Mentve – ütközik: ${ovName.value} ${conflict.start}`)
   ap.calDate = date.value
   ui.close()
 }
@@ -363,13 +428,19 @@ async function save() {
       <template v-if="risk.level === 'high'"><br>Javaslat: kérj SMS-t és e-mailt is, és jelezd, hogy egy nappal előtte telefonon is megerősítjük.</template>
     </div>
     <div v-if="ov" class="warn">Ez az időpont ütközik: {{ ovName }} {{ ov.start }}–{{ fromMin(toMin(ov.start) + ov.dur) }}{{ ov.buffer ? ` (+${ov.buffer}' ráhagyás)` : '' }}. Mentheted ütközéssel is, a naptárban jelölve marad.</div>
-    <div v-else-if="lateEnd" class="warn">A kezelés a rendelési idő ({{ db.settings.endHour }}:00) után érne véget.</div>
-    <div v-else-if="bufOver" class="warn">A ráhagyás a rendelési idő után érne véget.</div>
-    <div v-else-if="date && dow(date) > 5" class="warn">Hétvégén nincs rendelés.</div>
+    <div v-if="offWork" class="warn" data-test="beosztas-tiltas">
+      <b>{{ offText }}.</b><template v-if="nextFree"> Legközelebbi rendelési idő szabad hellyel: <button class="btn sm" type="button" @click="pick(nextFree[0], nextFree[1])">{{ fmtShort(nextFree[0]) }} {{ nextFree[1] }}</button></template>
+      <div class="row" style="margin-top:6px"><label class="row small"><input v-model="urgent" type="checkbox"> Sürgős eset – a tiltás felülbírálása (orvos / adminisztrátor, naplózva)</label><input v-if="urgent" v-model="urgentReason" class="inp" style="flex:1;min-width:180px" placeholder="Indoklás (kötelező)"></div>
+    </div>
     <div v-if="msg" ref="msgEl" class="err">{{ msg }}</div>
     <template #foot>
       <span class="muted small">Díj: <b>{{ fee.toLocaleString('hu-HU') }} Ft</b></span>
       <div class="spacer" />
+      <!-- v2.4 11. pont (B-012): törlés és lemondás az időpont szerkesztő ablakában is -->
+      <template v-if="ed && ed.date >= today() && !recordForAppt(db, ed.id)">
+        <button class="btn danger" type="button" data-test="foglalas-torles" @click="ui.open(ApptRemoveModal, { id: ed.id, kind: 'delete' })">Törlés (téves rögzítés)</button>
+        <button class="btn danger" type="button" @click="ui.open(ApptRemoveModal, { id: ed.id, kind: 'cancel' })">Lemondás</button>
+      </template>
       <button class="btn" @click="ui.close()">Mégse</button>
       <button class="btn pri" @click="save">{{ ed ? 'Módosítás mentése' : 'Foglalás' }}</button>
     </template>

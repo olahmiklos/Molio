@@ -15,8 +15,10 @@ import SuggestionModal from '~/components/modals/SuggestionModal.vue'
 import { useOfficeStore } from '~/stores/office'
 import { agoText } from '~/utils/office'
 import InformModal from '~/components/modals/InformModal.vue'
-import { buildTasks, TASK_KINDS, type TaskKind } from '~/utils/v22'
+import { buildTasks, TASK_KINDS, type Task, type TaskKind } from '~/utils/v22'
 import { isOverdue, needsFollowUp, sinceDays, SUG_STATUS, sugFee, URGENCY } from '~/utils/suggest'
+import { approveAndSend, archivedInfos, declineInfo, INFO_ARCH_TEXT, infoState, pendingInfos, restoreInfo } from '~/utils/v24'
+import { dayDiff } from '~/utils/dates'
 
 const data = useDataStore()
 const ap = useAppointmentStore()
@@ -29,8 +31,8 @@ const high = computed(() => list.value.filter(x => x.rk.level === 'high'))
 const pat = (id: string) => db.value.patients.find(p => p.id === id)
 const office = useOfficeStore()
 const route = useRoute()
-type Tab = 'tasks' | 'appt' | 'recall' | 'todo'
-const tabOf = (v: unknown): Tab => (v === 'recall' ? 'recall' : v === 'todo' ? 'todo' : v === 'appt' ? 'appt' : 'tasks')
+type Tab = 'tasks' | 'appt' | 'recall' | 'todo' | 'info'
+const tabOf = (v: unknown): Tab => (v === 'recall' ? 'recall' : v === 'todo' ? 'todo' : v === 'appt' ? 'appt' : v === 'info' ? 'info' : 'tasks')
 const tab = ref<Tab>(tabOf(route.query.tab))
 watch(() => route.query.tab, v => { tab.value = tabOf(v) })
 const showBooked = ref(false), showHidden = ref(false)
@@ -42,33 +44,73 @@ const sugFilter = ref<'open' | 'all'>('open')
 const sugList = computed(() => (sugFilter.value === 'open' ? sugs.open : db.value.suggestions.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt))))
 const signals = computed(() => ap.signals)
 /* egységes Teendők (spec v2.2, 8. pont): raktári teendők nélkül */
-const fKind = ref<'' | TaskKind>(''), fDoc = ref(''), fUrg = ref('')
-const allTasks = computed(() => buildTasks(db.value))
+const fKind = ref<'' | TaskKind>((Object.keys(TASK_KINDS) as string[]).includes(String(route.query.kind)) ? String(route.query.kind) as TaskKind : ''), fDoc = ref(''), fUrg = ref('')
+watch(() => route.query.kind, v => { if ((Object.keys(TASK_KINDS) as string[]).includes(String(v))) { fKind.value = String(v) as TaskKind; tab.value = 'tasks' } })
+/* v2.4 10. pont: a jóváhagyásra váró tájékoztatók is teendők (az orvosnak) */
+const approveTasks = computed<Task[]>(() => pendingInfos(db.value).map(r => ({ key: 'a:' + r.id, kind: 'approve' as TaskKind, patientId: r.patientId, doctorId: r.doctorId, title: `${fmtDate(r.date)} – ${typeNames(db.value, r.typeIds) || 'kezelés'}`, detail: 'A kezelés utáni tájékoztató e-mail az orvos jóváhagyására vár.', urgency: 'recommended' as const, due: r.patientInfo?.deadline || null, overdue: false, status: `vár (${Math.max(0, dayDiff(r.date, today()))} napja)`, ref: r.id, refKind: 'record' as const })))
+const allTasks = computed<Task[]>(() => [...buildTasks(db.value), ...approveTasks.value])
 const tasks = computed(() => allTasks.value.filter(t => (!fKind.value || t.kind === fKind.value) && (!fDoc.value || t.doctorId === fDoc.value) && (!fUrg.value || t.urgency === fUrg.value)))
 const taskCount = computed(() => allTasks.value.length)
+const pnm = (aid: string) => { const a = ap.byId(aid); return a ? (pat(a.patientId)?.name || '?') + ' ' + a.start : aid }
+function openConflict(t: (typeof allTasks.value)[number]) { const a = ap.byId(t.appts?.[0] || ''); if (!a) return; ap.showInCalendar(t.appts || [], a.date); navigateTo('/') }
+function intended(t: (typeof allTasks.value)[number]) {
+  const ids = t.appts || []
+  ids.forEach(id => { const a = ap.byId(id); if (a) a.overlapOk = [...(a.overlapOk || []), ...ids.filter(x => x !== id && !(a.overlapOk || []).some(o => o.id === x)).map(x => ({ id: x, at: new Date().toISOString(), by: 'asszisztens' }))] })
+  ui.toast('Szándékos átfedésként lezárva – a naptárban halványabb jelzés marad')
+}
 function act(t: (typeof allTasks.value)[number]) {
+  if (t.kind === 'conflict') { openConflict(t); return }
+  if (t.kind === 'approve') { tab.value = 'info'; openRec.value = t.ref; return }
   if (t.refKind === 'suggestion') ui.open(BookingModal, { suggestionIds: [t.ref] })
   else if (t.kind === 'inform') ui.open(InformModal, { patientId: t.patientId, apptIds: [t.ref] })
   else if (t.refKind === 'recall') ui.open(BookingModal, { patientId: t.patientId, typeId: t.typeId })
   else ui.open(AppointmentModal, { id: t.ref.split('|')[0]! })
 }
 function detail(t: (typeof allTasks.value)[number]) {
+  if (t.kind === 'conflict') { openConflict(t); return }
+  if (t.kind === 'approve') { tab.value = 'info'; openRec.value = t.ref; return }
   if (t.refKind === 'suggestion') ui.open(SuggestionModal, { id: t.ref })
   else if (t.refKind === 'recall') ui.open(RecallMessageModal, { patientId: t.patientId, typeId: t.typeId })
   else act(t)
 }
 function done(t: (typeof allTasks.value)[number]) { const [a, r] = t.ref.split('|'); if (r) ap.doneReply(a!, r) }
 function coord(pid: string) { ui.open(InformModal, { patientId: pid }) }
+
+/* ---------- v2.4 10. pont: jóváhagyásra váró tájékoztatók (orvosi nézet) és Archívum ---------- */
+/** a demóban belépés nélkül az orvosi szűrő választható: kiválasztott orvos = orvosi nézet (jóváhagyhat); „asszisztens” = csak az állapot látszik */
+const actor = ref<string>(db.value.doctors[0]?.id || '')
+const infoView = ref<'pending' | 'archive'>('pending')
+const openRec = ref('')
+const editing = ref(''), editText = ref('')
+const declining = ref(''), declineReason = ref('')
+const isDoctor = computed(() => !!actor.value)
+const infoList = computed(() => (infoView.value === 'pending' ? pendingInfos(db.value, actor.value || undefined) : archivedInfos(db.value, actor.value || undefined)))
+const infoCount = computed(() => pendingInfos(db.value).length)
+const recById = (id: string) => db.value.records.find(r => r.id === id)
+const dName = (id: string) => db.value.doctors.find(d => d.id === id)?.name || ''
+function startEdit(id: string) { editing.value = id; editText.value = recById(id)?.patientInfo?.text || ''; openRec.value = id }
+function saveEdit(id: string) { const i = recById(id)?.patientInfo; if (i && editText.value.trim() !== i.text.trim()) { i.text = editText.value; i.edited = true; i.log = [...(i.log || []), { at: new Date().toISOString(), by: dName(actor.value), what: 'a szöveg módosítva küldés előtt' }] } editing.value = '' }
+function nextOf(id: string) { const l = infoList.value; const i = l.findIndex(r => r.id === id); const n = l[i + 1] || l.find(r => r.id !== id); openRec.value = n?.id || '' }
+function approveSend(id: string) {
+  if (!isDoctor.value) { ui.toast('Csak a kezelést végző orvos hagyhatja jóvá (válaszd ki az orvost)'); return }
+  if (editing.value === id) saveEdit(id)
+  const r = recById(id); const nm = dName(actor.value)
+  nextOf(id)
+  if (approveAndSend(db.value, id, nm)) ui.toast(`Jóváhagyva és elküldve e-mailben: ${pat(r!.patientId)?.email} (demó: szimulált küldés)`)
+}
+function decline(id: string) { if (!isDoctor.value) return; nextOf(id); if (declineInfo(db.value, id, dName(actor.value), declineReason.value.trim())) ui.toast('Nem szükséges – a tájékoztató nem megy ki'); declining.value = ''; declineReason.value = '' }
+function bringBack(id: string) { if (!isDoctor.value) { ui.toast('Csak az orvos (és az adminisztrátor) hozhatja vissza'); return } if (restoreInfo(db.value, id, dName(actor.value))) ui.toast('Visszahozva a jóváhagyásra váró tájékoztatók közé – új 7 napos határidővel (nem ment ki semmi)') }
+function openVisit(r: { id: string; patientId: string }) { navigateTo(`/paciensek/${r.patientId}#kezelesek`) }
 </script>
 
 <template>
   <div>
     <div class="pagehead"><h1>Teendők</h1><span v-if="tab === 'appt'" class="muted">{{ fmtDate(today()) }} – {{ fmtDate(addDays(today(), 7)) }}</span>
       <div class="spacer" />
-      <div class="seg"><button :class="{ on: tab === 'tasks' }" @click="tab = 'tasks'">Minden teendő ({{ taskCount }})</button><button :class="{ on: tab === 'appt' }" @click="tab = 'appt'">Emlékeztetők és kockázat<template v-if="signals.length"> ({{ signals.length }} lemondás)</template></button><button :class="{ on: tab === 'recall' }" @click="tab = 'recall'">Kontroll-felülvizsgálatok ({{ openRecalls }})</button><button :class="{ on: tab === 'todo' }" @click="tab = 'todo'">Javasolt kezelések ({{ sugs.count }})</button></div>
+      <div class="seg"><button :class="{ on: tab === 'tasks' }" @click="tab = 'tasks'">Minden teendő ({{ taskCount }})</button><button :class="{ on: tab === 'appt' }" @click="tab = 'appt'">Emlékeztetők és kockázat<template v-if="signals.length"> ({{ signals.length }} lemondás)</template></button><button :class="{ on: tab === 'recall' }" @click="tab = 'recall'">Kontroll-felülvizsgálatok ({{ openRecalls }})</button><button :class="{ on: tab === 'todo' }" @click="tab = 'todo'">Javasolt kezelések ({{ sugs.count }})</button><button :class="{ on: tab === 'info' }" data-test="tajekoztatok-ful" @click="tab = 'info'">Jóváhagyásra váró tájékoztatók ({{ infoCount }})</button></div>
     </div>
     <template v-if="tab === 'tasks'">
-      <div class="hint">Az asszisztens egységes teendőlistája: egyeztetendő időpontok (javasolt kezelések), kiküldendő tájékoztatók, esedékes kontrollok, lemondást jelzett időpontok és a páciensek üzenetei. A raktári teendők (megrendelés, szállítás) a Raktár menüben maradnak.</div>
+      <div class="hint">Egységes teendőlista: időpont-ütközések, beosztáson kívüli időpontok, egyeztetendő időpontok (javasolt kezelések), kiküldendő tájékoztatók, az orvos jóváhagyására váró tájékoztatók, esedékes kontrollok, lemondást jelzett időpontok és a páciensek üzenetei. A raktári teendők (megrendelés, szállítás) a Raktár menüben maradnak.</div>
       <div class="row" style="margin-bottom:10px">
         <select v-model="fKind" class="inp auto"><option value="">minden típus</option><option v-for="(v, k) in TASK_KINDS" :key="k" :value="k">{{ v.label }}</option></select>
         <select v-model="fDoc" class="inp auto"><option value="">minden orvos</option><option v-for="d in db.doctors" :key="d.id" :value="d.id">{{ d.name }}</option></select>
@@ -87,7 +129,17 @@ function coord(pid: string) { ui.open(InformModal, { patientId: pid }) }
               <td class="small">{{ t.status }}</td>
               <td class="nowrap" @click.stop>
                 <button v-if="t.kind === 'reply'" class="btn sm" @click="done(t)">Kész</button>
-                <button class="btn sm go" @click="act(t)">{{ t.kind === 'inform' ? 'Tájékoztató' : t.kind === 'cancel' || t.kind === 'reply' ? 'Megnyitás' : 'Időpont' }}</button>
+                <template v-if="t.kind === 'conflict'">
+                  <button class="btn sm go" @click="openConflict(t)">Megnyitás</button>
+                  <select class="inp auto" style="margin-left:4px" aria-label="Áthelyezés" @change="($event.target as HTMLSelectElement).value && ui.open(BookingModal, { editId: ($event.target as HTMLSelectElement).value }); ($event.target as HTMLSelectElement).value = ''"><option value="">Áthelyezés…</option><option v-for="id in t.appts" :key="id" :value="id">{{ pnm(id) }}</option></select>
+                  <select class="inp auto" style="margin-left:4px" aria-label="Értesítés kiküldése" @change="($event.target as HTMLSelectElement).value && ui.open(MessageModal, { id: ($event.target as HTMLSelectElement).value }); ($event.target as HTMLSelectElement).value = ''"><option value="">Értesítés kiküldése…</option><option v-for="id in t.appts" :key="id" :value="id">{{ pnm(id) }}</option></select>
+                  <button class="btn sm" style="margin-left:4px" title="Az átfedés szándékos (pl. két szék, két asszisztens) – a feladat lezárul" @click="intended(t)">Szándékos átfedés</button>
+                </template>
+                <template v-else-if="t.kind === 'offsched'">
+                  <button class="btn sm go" @click="ui.open(BookingModal, { editId: t.ref })">Áthelyezés</button>
+                  <button class="btn sm" style="margin-left:4px" @click="ui.open(MessageModal, { id: t.ref })">Értesítés</button>
+                </template>
+                <button v-else class="btn sm go" @click="act(t)">{{ t.kind === 'inform' ? 'Tájékoztató' : t.kind === 'approve' ? 'Elolvasás' : t.kind === 'cancel' || t.kind === 'reply' ? 'Megnyitás' : 'Időpont' }}</button>
                 <button v-if="t.kind === 'schedule' || t.kind === 'late'" class="btn sm" style="margin-left:4px" title="Kézi, udvarias üzenet: egyeztessen időpontot" @click="coord(t.patientId)">Üzenet</button>
               </td>
             </tr>
@@ -95,6 +147,42 @@ function coord(pid: string) { ui.open(InformModal, { patientId: pid }) }
           </tbody>
         </table>
       </div>
+    </template>
+    <template v-else-if="tab === 'info'">
+      <div class="hint">A kezelés utáni tájékoztató e-mail csak az orvos jóváhagyása után megy ki, és csak ha a páciens e-mailes értesítést kér. Ha 7 napon belül nincs jóváhagyás, az Archívumba kerül („nem került kiküldésre”) – onnan visszahozható. Tömeges jóváhagyás nincs, hogy az orvos valóban elolvassa, mi megy ki. <span class="small">(Demó: a küldés szimulált, valódi e-mail nem megy ki.)</span></div>
+      <div class="row" style="margin-bottom:10px">
+        <label class="small muted">Nézet:</label>
+        <select v-model="actor" class="inp auto" data-test="orvos-szuro"><option v-for="d in db.doctors" :key="d.id" :value="d.id">{{ d.name }} (orvos)</option><option value="">Asszisztens – csak az állapot</option></select>
+        <div class="seg"><button :class="{ on: infoView === 'pending' }" @click="infoView = 'pending'">Jóváhagyásra vár</button><button :class="{ on: infoView === 'archive' }" @click="infoView = 'archive'">Archívum</button></div>
+        <span class="small muted">{{ infoList.length }} tájékoztató</span>
+      </div>
+      <div v-for="r in infoList" :key="r.id" class="card" style="padding:12px 14px" :data-test="'info-' + infoState(r)">
+        <div class="row click" @click="openRec = openRec === r.id ? '' : r.id">
+          <b>{{ pat(r.patientId)?.name }}</b><span>{{ fmtDate(r.date) }} · {{ typeNames(db, r.typeIds) || 'kezelés' }}</span><span class="small muted">{{ dName(r.doctorId) }}</span>
+          <span v-if="infoState(r) === 'pending'" class="badge b-yellow">vár {{ Math.max(0, dayDiff(r.date, today())) }} napja · határidő: {{ r.patientInfo?.deadline ? fmtDate(r.patientInfo.deadline) : '–' }}</span>
+          <span v-else class="badge" :class="infoState(r) === 'sent' ? 'b-green' : 'b-gray'">{{ INFO_ARCH_TEXT[infoState(r)] }}{{ infoState(r) === 'sent' && r.patientInfo?.sentAt ? ': ' + fmtDate(r.patientInfo.sentAt.slice(0, 10)) + ' · e-mail · ' + (r.patientInfo.approvedBy || '') : '' }}</span>
+          <div class="spacer" /><span class="small muted">{{ openRec === r.id ? '▴' : '▾' }}</span>
+        </div>
+        <div v-if="openRec === r.id" style="margin-top:8px">
+          <textarea v-if="editing === r.id" v-model="editText" class="inp" rows="12" style="font-size:14px;line-height:1.55" />
+          <div v-else class="mail" style="white-space:pre-line;font-size:14px;line-height:1.55">{{ r.patientInfo?.text }}</div>
+          <div v-if="r.patientInfo?.archived === 'declined' && r.patientInfo.declineReason" class="small muted">Indoklás: {{ r.patientInfo.declineReason }}</div>
+          <div v-if="r.patientInfo?.log?.length" class="small muted" style="margin-top:4px"><div v-for="(l, k) in r.patientInfo.log" :key="k">{{ new Date(l.at).toLocaleString('hu-HU') }} · {{ l.by }}: {{ l.what }}</div></div>
+          <div class="row" style="margin-top:8px">
+            <template v-if="infoState(r) === 'pending'">
+              <button class="btn go" :disabled="!isDoctor" :title="isDoctor ? '' : 'Csak az orvos hagyhatja jóvá'" data-test="jovahagyas-kuldes" @click="approveSend(r.id)">Jóváhagyás és küldés</button>
+              <button v-if="editing !== r.id" class="btn" :disabled="!isDoctor" @click="startEdit(r.id)">Szerkesztés</button>
+              <button v-else class="btn" @click="saveEdit(r.id)">Szerkesztés kész</button>
+              <template v-if="declining === r.id"><input v-model="declineReason" class="inp" style="max-width:220px" placeholder="Indoklás (nem kötelező)"><button class="btn danger" @click="decline(r.id)">Nem szükséges – megerősítés</button></template>
+              <button v-else class="btn" :disabled="!isDoctor" @click="declining = r.id">Nem szükséges</button>
+            </template>
+            <button v-else-if="infoState(r) === 'expired' || infoState(r) === 'declined'" class="btn" :disabled="!isDoctor" data-test="visszahozas" @click="bringBack(r.id)">Visszahozás jóváhagyásra</button>
+            <button class="btn" @click="openVisit(r)">Megnyitás</button>
+            <span v-if="!isDoctor" class="small muted">Asszisztens nézet: az állapot látszik, a jóváhagyás az orvosé.</span>
+          </div>
+        </div>
+      </div>
+      <p v-if="!infoList.length" class="muted">{{ infoView === 'pending' ? 'Nincs jóváhagyásra váró tájékoztató.' : 'Az archívum üres.' }}</p>
     </template>
     <template v-else-if="tab === 'recall'">
       <div class="hint">

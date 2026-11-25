@@ -6,6 +6,8 @@ import { bufferFor, doctorName, recordForAppt, typeById, typeNames } from './log
 import { isOpenSuggestion, isOverdue, isPendingSuggestion, needsFollowUp, sugFee, URGENCY } from './suggest'
 import { recallRows } from './office'
 import { OLD_SUGGEST_TPL, SUGGEST_TPL } from './defaults'
+import { conflictGroups, conflictUrgency } from './conflicts'
+import { notWorkingText, offSchedule } from './schedule'
 
 export const DURS = [30, 60, 90, 120, 150, 180, 210, 240, 300]
 export const DELETE_RESTORE_DAYS = 30
@@ -182,7 +184,7 @@ export function pendingInform(db: DB, pid: string): { appts: Appointment[]; ctx:
 }
 
 /* ---------- 8. pont: egységes Teendők (asszisztens) ---------- */
-export type TaskKind = 'schedule' | 'inform' | 'recall' | 'cancel' | 'reply' | 'late'
+export type TaskKind = 'schedule' | 'inform' | 'recall' | 'cancel' | 'reply' | 'late' | 'conflict' | 'offsched' | 'approve'
 export const TASK_KINDS: Record<TaskKind, { label: string; cls: string }> = {
   schedule: { label: 'Időpontot kell egyeztetni', cls: 'b-yellow' },
   inform: { label: 'Tájékoztató küldése', cls: 'b-blue' },
@@ -190,6 +192,9 @@ export const TASK_KINDS: Record<TaskKind, { label: string; cls: string }> = {
   cancel: { label: 'Lemondást jelzett', cls: 'b-red' },
   reply: { label: 'Páciens üzenete', cls: 'b-blue' },
   late: { label: 'Lejárt határidő', cls: 'b-red' },
+  conflict: { label: 'Időpont-ütközés', cls: 'b-red' },
+  offsched: { label: 'Időpont a beosztáson kívül', cls: 'b-red' },
+  approve: { label: 'Tájékoztató jóváhagyásra vár', cls: 'b-blue' },
 }
 export interface Task {
   key: string
@@ -207,8 +212,12 @@ export interface Task {
   status: string
   /** az eredeti sor azonosítója (javaslat, időpont, kontroll kulcs) */
   ref: string
-  refKind: 'suggestion' | 'appointment' | 'recall'
+  refKind: 'suggestion' | 'appointment' | 'recall' | 'conflict' | 'record'
   typeId?: string
+  /** v2.4 7. pont: az ütköző csoport időpontjai */
+  appts?: string[]
+  /** csak ráhagyás-ütközés */
+  soft?: boolean
 }
 /** a „Teendők” menü sorai; a raktári teendők (megrendelés, késő szállítás) nem ide tartoznak */
 export function buildTasks(db: DB): Task[] {
@@ -247,6 +256,23 @@ export function buildTasks(db: DB): Task[] {
   db.appointments.filter(a => a.date >= today() && !recordForAppt(db, a.id)).forEach(a => {
     if (a.cancelSignal) out.push({ key: 'c:' + a.id, kind: 'cancel', patientId: a.patientId, doctorId: a.doctorId, title: `Lemondást jelzett: ${fmtDate(a.date)} ${a.start}`, detail: `„${a.cancelSignal.text}”`, urgency: 'urgent', due: a.date, overdue: false, status: 'az asszisztens döntése szükséges', ref: a.id, refKind: 'appointment' })
     ;(a.replies || []).filter(r => !r.done).forEach(r => out.push({ key: 'm:' + r.id, kind: 'reply', patientId: a.patientId, doctorId: a.doctorId, title: `Üzenet az emlékeztetőre: ${fmtDate(a.date)} ${a.start}`, detail: `„${r.text}”`, urgency: 'recommended', due: null, overdue: false, status: 'megválaszolandó', ref: a.id + '|' + r.id, refKind: 'appointment' }))
+  })
+  // 6. v2.4 7. pont: időpont-ütközés – egy feladat minden ütköző csoportra; magától megszűnik, ha az ütközés megszűnik
+  const pName = (pid: string) => db.patients.find(p => p.id === pid)?.name || '?'
+  const DAYN = ['hétf.', 'kedd', 'szer.', 'csüt.', 'pént.', 'szom.', 'vas.']
+  const dayN = (d: string) => { const g = new Date(d + 'T12:00:00').getDay(); return DAYN[g === 0 ? 6 : g - 1] }
+  conflictGroups(db, { isDone: a => !!recordForAppt(db, a.id) }).filter(g => !g.ok).forEach(g => {
+    const u = conflictUrgency(g)
+    out.push({
+      key: g.key, kind: 'conflict', patientId: g.appts[0]!.patientId, doctorId: g.doctorId,
+      title: `${g.appts.map(a => pName(a.patientId)).join(' és ')} – ${dayN(g.date)} ${g.date}, ${g.appts.map(a => a.start).join(' / ')}, ${doctorName(db, g.doctorId)}`,
+      detail: g.hard ? 'A kezelések időben átfedik egymást: valamelyik időpontot el kell tolni, illetve a pácienst értesíteni kell.' : 'Csak a ráhagyás fedi át a másik időpontot.',
+      urgency: u, due: g.date, overdue: u === 'urgent', status: g.hard ? 'ütközés – kezelendő' : 'ráhagyás-ütközés', ref: g.key, refKind: 'conflict', appts: g.appts.map(a => a.id), soft: !g.hard,
+    })
+  })
+  // 7. v2.4 21. pont: a beosztás módosítása után a rendelési időn kívülre eső meglévő időpontok
+  offSchedule(db, a => !!recordForAppt(db, a.id)).forEach(a => {
+    out.push({ key: 'o:' + a.id, kind: 'offsched', patientId: a.patientId, doctorId: a.doctorId, title: `${fmtDate(a.date)} ${a.start} – ${typeNames(db, a.typeIds)}`, detail: notWorkingText(db, a.doctorId, a.date) + ' – helyezd át, vagy értesítsd a pácienst.', urgency: a.date <= addDays(today(), 1) ? 'urgent' : 'recommended', due: a.date, overdue: false, status: 'áthelyezendő', ref: a.id, refKind: 'appointment' })
   })
   return out.sort((a, b) => URGENCY[a.urgency].rank - URGENCY[b.urgency].rank || Number(b.overdue) - Number(a.overdue) || (a.due || '9999').localeCompare(b.due || '9999'))
 }

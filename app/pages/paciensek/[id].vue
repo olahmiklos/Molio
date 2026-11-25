@@ -26,6 +26,7 @@ import SuggestionModal from '~/components/modals/SuggestionModal.vue'
 import { isOverdue, sugFee, sugTotal, SUG_STATUS, URGENCY } from '~/utils/suggest'
 import { apptPrice } from '~/utils/logic'
 import InformModal from '~/components/modals/InformModal.vue'
+import ApptRemoveModal from '~/components/modals/ApptRemoveModal.vue'
 import { draftDaysLeft, liveDrafts, canRestore, restorableUntil, scheduleRatio, sugSourceText, sugsOfRecord } from '~/utils/v22'
 
 const route = useRoute()
@@ -88,6 +89,15 @@ async function newTreatment() {
   navigateTo('/kezeles')
 }
 function edit(rid: string) { tx.editRecord(rid); navigateTo('/kezeles') }
+/** v2.4 8. pont 9.: a kezelés a páciens Kezelések soráról is indítható – a „Mai feladat” összefoglaló az időpontból / az előjegyzett tételből készül */
+async function startFrom(o: { apptId?: string; sugId?: string }) {
+  if (tx.active) {
+    if (!(await ui.confirm('Egy másik kezelés még folyamatban van. Elveted, és ezt indítod?', 'Kezelés indítása', true))) return
+    tx.cancel()
+  }
+  if (o.apptId) tx.startFromAppointment(o.apptId); else if (o.sugId) tx.startFromSuggestion(o.sugId)
+  navigateTo('/kezeles')
+}
 const statusSummary = (teeth: Record<string, string[]>) => {
   const c: Record<string, number> = {}
   Object.values(teeth).forEach(st => st.forEach(s => { if (s !== 'ep') c[s] = (c[s] || 0) + 1 }))
@@ -189,6 +199,9 @@ const statusSummary = (teeth: Record<string, string[]>) => {
           <span v-if="a.cancelSignal" class="badge b-red">lemondást jelzett</span>
           <div class="spacer" /><span class="muted small">becsült díj: {{ fmtFt(apptPrice(db, a)) }}</span>
           <button class="btn sm" @click.stop="ui.open(BookingModal, { editId: a.id })">Szerkesztés</button>
+          <!-- v2.4 11. pont (B-012): törlés a szerkesztés mellett (a teljes időpontot törli; az egyes tételek törlése a szerkesztő ablakban, tételenként) -->
+          <button class="btn sm danger" data-test="sor-torles" @click.stop="ui.open(ApptRemoveModal, { id: a.id, kind: 'delete' })">Törlés</button>
+          <button class="btn sm go" @click.stop="startFrom({ apptId: a.id })">Kezelés indítása</button>
         </div>
         <div class="small" style="margin-top:4px">{{ plannedLine(a) }}</div>
         <div v-for="i in (a.items || []).filter(x => x.suggestionId)" :key="i.suggestionId" class="small muted">↳ {{ tname(i.typeId) }}{{ i.tooth ? ' · ' + i.tooth : '' }}: {{ db.suggestions.find(x => x.id === i.suggestionId) ? sugSourceText(db, db.suggestions.find(x => x.id === i.suggestionId)!) : '' }}</div>
@@ -200,6 +213,7 @@ const statusSummary = (teeth: Record<string, string[]>) => {
           <span v-if="g.due" class="small" :style="isOverdue(g) ? 'color:var(--red);font-weight:700' : ''">határidő: {{ fmtDate(g.due) }}</span>
           <div class="spacer" /><span class="muted small">becsült díj: {{ fmtFt(sugFee(db, g)) }}</span>
           <button class="btn sm go" @click.stop="ui.open(BookingModal, { suggestionIds: [g.id] })">Időpont</button>
+          <button class="btn sm" @click.stop="startFrom({ sugId: g.id })">Kezelés indítása</button>
         </div>
         <div class="small muted" style="margin-top:2px">javasolt kezelés – még nincs időpont · {{ sugSourceText(db, g) }}{{ g.note ? ' · ' + g.note : '' }}</div>
       </div>
@@ -242,11 +256,13 @@ const statusSummary = (teeth: Record<string, string[]>) => {
                 {{ i.tooth ? i.tooth + ': ' : '' }}{{ tname(i.typeId) }}<template v-if="ORIGIN_B[i.origin]![0]"> · {{ ORIGIN_B[i.origin]![0] }}</template><template v-if="i.fee && i.state === 'done'"> · {{ fmtFt(i.fee) }}</template>
               </span>
             </div>
+            <div class="mats" style="margin-top:4px">Felhasznált anyagok: {{ r.materials.length ? r.materials.map(m => `${db.items.find(i => i.id === m.item)?.name || '?'} ${m.qty} ${db.items.find(i => i.id === m.item)?.unit || ''}`).join(' · ') : '–' }}</div>
             <div v-if="sugsOfRecord(db, r.id).length" class="sumbox" style="margin-top:8px">
               <div class="small" style="font-weight:700;color:var(--orange)">Ezen az alkalmon javasolt további kezelések</div>
               <div v-for="x in sugsOfRecord(db, r.id)" :key="x.s.id" class="small" style="padding:2px 0">• <b>{{ tname(x.s.typeId) }}</b>{{ x.s.tooth ? ' · ' + x.s.tooth : '' }}{{ (x.s.confirms || []).some(c => c.recordId === r.id) ? ' (újra megerősítve)' : '' }} – <span class="muted">{{ x.where }}</span> <a style="cursor:pointer" @click="ui.open(SuggestionModal, { id: x.s.id })">megnyitás</a></div>
             </div>
             <div v-if="r.planned?.teeth.length" class="small muted" style="margin-top:4px">Tervezett: {{ teethStr(r.planned.teeth, r.planned.surfaces) }} · kezelt: {{ teethStr(r.teeth, r.surfaces) }}</div>
+            <div v-for="(n, k) in (r.notDone || [])" :key="'nd' + k" class="small" style="color:#a1241a">Nem történt meg: {{ tname(n.typeId) }}{{ n.tooth ? ' (' + n.tooth + ')' : '' }}{{ n.note ? ' – ' + n.note : '' }} → következő lépés</div>
             <p>{{ r.text || '(nincs leírás)' }}</p>
             <div class="row small" style="margin:6px 0 2px;gap:6px">
               <button class="badge as-btn" :class="r.eeszt?.status === 'sent' ? 'b-green' : 'b-yellow'" @click="ui.open(EesztModal, { recordId: r.id })">EESZT: {{ r.eeszt?.status === 'sent' ? 'beküldve' : 'beküldésre vár' }}</button>
@@ -257,7 +273,6 @@ const statusSummary = (teeth: Record<string, string[]>) => {
             </div>
             <div v-if="lotsLine(r)" class="small muted">LOT: {{ lotsLine(r) }}</div>
             <div v-if="r.editLog?.length" class="small muted">Utólag módosítva: {{ r.editLog.map(e => e.at + (e.by ? ' · ' + e.by : '')).join('; ') }}</div>
-            <div class="mats">Felhasznált anyagok: {{ r.materials.length ? r.materials.map(m => `${db.items.find(i => i.id === m.item)?.name || '?'} ${m.qty} ${db.items.find(i => i.id === m.item)?.unit || ''}`).join(' · ') : '–' }}</div>
             <div v-if="attsOf(r.id).length" class="att-list">
               <AttachmentCard v-for="a in attsOf(r.id)" :key="a.id" :a="a" @open="ui.open(AttachmentViewer, { id: a.id })" />
             </div>

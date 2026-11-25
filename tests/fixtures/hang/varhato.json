@@ -1,0 +1,8 @@
+{
+  "leiras": "Kiadás előtti tesztfelvételek (spec v2.4 5. pont): a fejlesztő saját hangja, telefonnal felvéve, betegadatot nem tartalmaz. A .wav a 16 kHz-es, mono, 16 bites változat (ezt kapja a Worker), a .m4a az eredeti telefonos felvétel.",
+  "kuszob": 0.8,
+  "felvetelek": [
+    { "fajl": "felvetel_1.wav", "eredeti": "felvetel_1.m4a", "szoveg": "Fog harminchat. Fog 36-os. Jobb fent hatos." },
+    { "fajl": "felvetel_2.wav", "eredeti": "felvetel_2.m4a", "szoveg": "36-os fog, meziális és rágófelszíni kompozit tömés, érzéstelenítés két ampullával, kérek öt tampont." }
+  ]
+}

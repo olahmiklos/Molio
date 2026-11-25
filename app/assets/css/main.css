@@ -420,3 +420,4 @@ ul.sum { margin: 0; padding-left: 20px; line-height: 1.75 }
 .sched-cell.ovr { box-shadow: inset 0 0 0 2px #f0a96a }
 .sched-cell.past { opacity: .5; cursor: default }
 @media (max-width: 700px) { .sched-grid { grid-template-columns: 70px repeat(7, minmax(44px, 1fr)); overflow-x: auto } }
+.ap.hl { box-shadow: 0 0 0 3px #ffd400, 0 5px 14px rgba(0, 0, 0, .25) !important; z-index: 4 }

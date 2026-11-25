@@ -6,7 +6,7 @@ import acc from '~/data/accuracy.json'
 import { useDictStore } from '~/stores/dict'
 import { useVoiceStore } from '~/stores/voice'
 import { AI_MODEL_LABEL, WHISPER_MODEL } from '~/utils/dict/prompt'
-import { APP_VERSION, BUILD_TIME_HU, SPEC, VERSION_LINE, buildInfo, versionReport } from '~/utils/meta'
+import { APP_VERSION, BUILD_TIME_HU, SPEC, VERSION_LINE, buildInfo, versionReport, DEV_TOOLS } from '~/utils/meta'
 
 const data = useDataStore()
 const ui = useUiStore()
@@ -15,7 +15,7 @@ const b = buildInfo()
 const state = ref<'idle' | 'checking' | 'latest' | 'found' | 'unsupported'>('idle')
 const dict = useDictStore(), voice = useVoiceStore()
 onMounted(() => { dict.init(); void voice.probe() })
-const recognizer = computed(() => dict.s.prefs.recognizer === 'whisper' ? `Pontos felismerés (Whisper – ${WHISPER_MODEL})` : 'Alap felismerés (a böngésző saját felismerője)')
+const recognizer = computed(() => dict.eff.recognizer === 'whisper' ? `Pontos felismerés (Whisper – ${WHISPER_MODEL})` : 'Alap felismerés (a böngésző saját felismerője)')
 const aiLine = computed(() => `${AI_MODEL_LABEL} – ${dict.s.prefs.ai ? 'be van kapcsolva' : 'ki van kapcsolva (kísérleti)'}`)
 const accLine = computed(() => `Diktálás-értelmezés pontossága: ${String(acc.total).replace('.', ',')}% – tesztkészlet: ${acc.examples} példa${acc.prev ? ` (előző kiadás: ${String(acc.prev.total).replace('.', ',')}%)` : ''}`)
 const report = computed(() => [versionReport(data.db.version), `Felismerő: ${recognizer.value}`, `AI-értelmezés: ${aiLine.value}`, accLine.value].join('\n'))
@@ -53,6 +53,8 @@ async function copy() {
       <div>Pontosság</div><div>{{ accLine }}<br><span class="muted small">kategóriánként: <template v-for="(v, k) in acc.byCat" :key="k">{{ k }} {{ String(v).replace('.', ',') }}% · </template></span></div>
       <div v-if="b.env !== 'DEMÓ'">Ág és kód</div><div v-if="b.env !== 'DEMÓ'">{{ b.branch || 'ismeretlen' }} · <code>{{ b.short || 'ismeretlen' }}</code></div>
       <div v-else>Kód</div><div v-if="b.env === 'DEMÓ'"><code>{{ b.short || 'ismeretlen' }}</code> <span class="muted">({{ b.branch }})</span></div>
+      <!-- v2.4 20. pont: rejtett „Látogatások” nézet – csak a teszt / fejlesztői buildben (a main buildben az oldal sem létezik) -->
+      <template v-if="DEV_TOOLS"><div>Látogatások</div><div><NuxtLink to="/latogatasok" data-test="latogatasok-sor">Látogatások megnyitása →</NuxtLink> <span class="small muted">ki, mikor és melyik verziót nézte meg a main és a teszt oldalon</span></div></template>
     </div>
     <div class="row" style="margin-top:10px">
       <button class="btn sm" :disabled="state === 'checking'" @click="check">{{ state === 'checking' ? 'Keresés…' : 'Frissítés keresése' }}</button>

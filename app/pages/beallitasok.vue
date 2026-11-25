@@ -17,6 +17,10 @@ import NewItemModal from '~/components/modals/NewItemModal.vue'
 import CodesPanel from '~/components/dict/CodesPanel.vue'
 import DictSettings from '~/components/dict/DictSettings.vue'
 import DictTrain from '~/components/dict/DictTrain.vue'
+import ClinicSchedule from '~/components/clinic/ClinicSchedule.vue'
+import { DEV_TOOLS } from '~/utils/meta'
+// v2.4 12. pont D: a Diktálás-labor csak a teszt / fejlesztői buildben létezik (a main buildből a kód kimarad)
+const DictLab = __MOLIO_DEV__ ? defineAsyncComponent(() => import('~/components/dev/DictLab.vue')) : null
 
 const data = useDataStore()
 const inv = useInventoryStore()
@@ -25,9 +29,10 @@ const tx = useTreatmentStore()
 const db = computed(() => data.db)
 const st = computed(() => db.value.settings)
 const route = useRoute()
-const TABS = ['clinic', 'notify', 'pkg', 'codes', 'dict', 'train', 'master', 'integr'] as const
-const tab = ref<typeof TABS[number]>((TABS as readonly string[]).includes(String(route.query.tab)) ? String(route.query.tab) as typeof TABS[number] : 'clinic')
-watch(() => route.query.tab, v => { if ((TABS as readonly string[]).includes(String(v))) tab.value = String(v) as typeof TABS[number] })
+const TABS = ['clinic', 'notify', 'pkg', 'codes', 'dict', 'train', 'lab', 'master', 'integr'] as const
+const okTab = (v: unknown) => (TABS as readonly string[]).includes(String(v)) && (v !== 'lab' || DEV_TOOLS)
+const tab = ref<typeof TABS[number]>(okTab(route.query.tab) ? String(route.query.tab) as typeof TABS[number] : 'clinic')
+watch(() => route.query.tab, v => { if (okTab(v)) tab.value = String(v) as typeof TABS[number] })
 const pkgSel = ref(db.value.types[0]?.id || '')
 const t = computed(() => db.value.types.find(x => x.id === pkgSel.value))
 const hours = Array.from({ length: 17 }, (_, i) => i + 6)
@@ -77,14 +82,15 @@ async function resetDemo() {
         <button :class="{ on: tab === 'codes' }" @click="tab = 'codes'">Kódtáblák és szinonimák</button>
  <button :class="{ on: tab === 'dict' }" @click="tab = 'dict'">Diktálás</button>
         <button :class="{ on: tab === 'train' }" @click="tab = 'train'">Diktálás betanítása</button>
+        <button v-if="DictLab" :class="{ on: tab === 'lab' }" data-test="labor-ful" @click="tab = 'lab'">Diktálás-labor</button>
         <button :class="{ on: tab === 'master' }" @click="tab = 'master'">Anyag-törzsadatok</button>
         <button :class="{ on: tab === 'integr' }" @click="tab = 'integr'">Kapcsolatok</button>
       </div>
     </div>
 
-    <div class="ai-note">
-      <b>Molio {{ APP_VERSION.replace(/\.0$/, '') }} – bemutató verzió:</b> a diktálás pontos felismerése a Cloudflare Workers AI Whisper-modelljével működik (a böngésző felismerője tartalék és élő előnézet); a kísérleti AI-értelmezés a Diktálás lapon kapcsolható be. API-kulcsot nem kell megadni.
-    </div>
+    <!-- v2.4 1. pont: a bemutató-tájékoztató felirat csak a Diktálás lapon jelenik meg (a betanítás és a súgó képernyőkről kikerült) -->
+    <!-- v2.4 22. pont: a Súgó és kézikönyv a fejléc helyett innen, egy sorból érhető el -->
+    <NuxtLink to="/sugo" class="card row" style="text-decoration:none;color:inherit;padding:10px 14px;margin-bottom:12px" data-test="sugo-sor"><b>? Súgó és kézikönyv</b><span class="small muted">a program használata, letölthető kézikönyv (PDF)</span><div class="spacer" /><span>→</span></NuxtLink>
 
     <!-- klinika -->
     <template v-if="tab === 'clinic'">
@@ -94,15 +100,16 @@ async function resetDemo() {
           <div class="field"><label class="f">Név</label><input v-model.lazy="st.clinic" class="inp" @change="saved"></div>
           <div class="field"><label class="f">Cím</label><input v-model.lazy="st.address" class="inp" @change="saved"></div>
           <div class="field"><label class="f">Telefon</label><input v-model.lazy="st.phone" class="inp" @change="saved"></div>
-          <div class="field"><label class="f">Rendelés kezdete</label><select v-model.number="st.startHour" class="inp" @change="saved"><option v-for="h in hours" :key="h" :value="h">{{ h }}:00</option></select></div>
-          <div class="field"><label class="f">Rendelés vége</label><select v-model.number="st.endHour" class="inp" @change="saved"><option v-for="h in hours" :key="h" :value="h">{{ h }}:00</option></select></div>
+          <div class="field"><label class="f">Naptár első sávja <span class="n">(a rendelési időt a beosztás adja)</span></label><select v-model.number="st.startHour" class="inp" @change="saved"><option v-for="h in hours" :key="h" :value="h">{{ h }}:00</option></select></div>
+          <div class="field"><label class="f">Naptár utolsó sávja</label><select v-model.number="st.endHour" class="inp" @change="saved"><option v-for="h in hours" :key="h" :value="h">{{ h }}:00</option></select></div>
           <div class="field"><label class="f">Előrejelzési ablak</label><input class="inp" value="60 nap (2 hónap)" disabled></div>
           <div class="field"><label class="f">Tejfogazat javaslata ennyi éves kor alatt</label><input v-model.number="st.primaryAgeLimit" class="inp" type="number" min="1" max="18" @change="saved"></div>
           <div class="field"><label class="f">Ráhagyás a megjelölt pácienseknél</label><select v-model.number="st.patientBuffer" class="inp" @change="saved"><option :value="30">30 perc</option><option :value="60">60 perc</option></select></div>
           <div class="field"><label class="f">Szervezet</label><input class="inp" :value="`${db.company.name} · ${db.sites[0]?.name} · ${db.rooms[0]?.name}`" disabled></div>
         </div>
-        <p class="small muted" style="margin:0">A demó egy céget, egy telephelyet és egy rendelőt kezel; a több telephely és rendelő a későbbi verzió része (az adatmodell már előkészített).</p>
+        <p class="small muted" style="margin:0">A cím és a telefonszám az értesítő üzenetek sablonjaiban szerepel. A demó egy céget és egy telephelyet kezel; a több telephely a későbbi verzió része (az adatmodell már előkészített).</p>
       </div>
+      <ClinicSchedule />
       <div class="card">
         <h2>Demó adatai</h2>
         <p class="muted" style="margin-top:0">A mintaadatok {{ fmtDate(db.seededAt) }}-án készültek ehhez a böngészőhöz. Az adatok csak ezen az eszközön és ebben a böngészőben tárolódnak.</p>
@@ -157,6 +164,7 @@ async function resetDemo() {
     <template v-else-if="tab === 'codes'"><CodesPanel /></template>
     <template v-else-if="tab === 'dict'"><DictSettings /></template>
     <template v-else-if="tab === 'train'"><DictTrain /></template>
+    <template v-else-if="tab === 'lab' && DictLab"><component :is="DictLab" /></template>
 
     <!-- kezelési csomagok -->
     <template v-else-if="tab === 'pkg'">

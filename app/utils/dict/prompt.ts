@@ -45,7 +45,7 @@ export function buildSentencePrompt(c: PromptCtx): string {
   c.plannedTypes.forEach(id => { const t = c.types.find(x => x.id === id); if (t) add(`Ma ${low(t.name.split(',')[0]!.replace(/\s*\(.*?\)/g, ''))} készül.`) })
   ;(c.macros || []).slice(0, 4).forEach(m => add(`${m.charAt(0).toUpperCase() + m.slice(1)}.`))
   c.learned.slice(0, 6).forEach(w => add(`${w.charAt(0).toUpperCase() + w.slice(1)}.`))
-  ;['Jobb alsó hatos, gyökérkezelés, guttapercha csúcs.', 'Fogkő-eltávolítás, polírozás, polírpaszta.', 'Bal felső négyes, MOD tömés, kofferdam.'].forEach(add)
+  ;['A jobb alsó hatoson gyökérkezelés guttapercha csúccsal.', 'Fogkő-eltávolítás után polírozás polírpasztával.', 'A 24-es fogon MOD tömés kofferdammal.'].forEach(add)
   let txt = ''
   for (const s of out) { if ((txt + ' ' + s).trim().length > max) break; txt = (txt + ' ' + s).trim() }
   return txt

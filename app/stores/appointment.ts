@@ -14,6 +14,9 @@ export const useAppointmentStore = defineStore('appointment', () => {
   const db = computed(() => data.db)
   const calMode = ref<CalMode>('day')
   const calDate = ref(today())
+  /** v2.4 7. pont: a Teendők „Megnyitás” gombja után a naptárban kiemelt (ütköző) időpontok */
+  const highlight = ref<string[]>([])
+  function showInCalendar(ids: string[], date: string) { highlight.value = ids; calDate.value = date; calMode.value = 'day'; setTimeout(() => { if (highlight.value === ids) highlight.value = [] }, 20000) }
 
   const byId = (id: string) => db.value.appointments.find(a => a.id === id)
   const risk = (a: Appointment) => riskFor(db.value, a)
@@ -38,7 +41,7 @@ export const useAppointmentStore = defineStore('appointment', () => {
     Object.assign(a, patch)
   }
   /** törlés / lemondás (spec v2.2, 2. pont): az időpont „törölve” állapotban 30 napig megmarad és visszaállítható; a tételek sorsa: nyitott javaslatként visszakerülnek a Teendőkbe, vagy átkerülnek egy másik időpontra */
-  function remove(id: string, o: { kind: 'delete' | 'cancel'; reason: string; by?: string; moveTo?: string | null }): DeletedAppt | undefined {
+  function remove(id: string, o: { kind: 'delete' | 'cancel'; reason: string; by?: string; moveTo?: string | null; drop?: boolean; notified?: boolean }): DeletedAppt | undefined {
     const a = byId(id); if (!a) return
     const sgIds = db.value.suggestions.filter(sg => sg.appointmentId === id && sg.status === 'booked').map(sg => sg.id)
     let fate = sgIds.length ? 'a javasolt tételek visszakerültek a Teendők közé' : 'nem volt javasolt eredetű tétel'
@@ -49,11 +52,22 @@ export const useAppointmentStore = defineStore('appointment', () => {
     if (o.moveTo && byId(o.moveTo)) {
       moveItems(id, o.moveTo, (a.items || []).map((_, i) => i), true)
       fate = 'a tételek átkerültek egy másik időpontra: ' + fmtD(byId(o.moveTo)!)
+    } else if (o.drop) {
+      // v2.4 11. pont 5.: törlés a tételekkel együtt – a javasolt tételek lezárulnak (visszaállításkor újra kötődnek)
+      db.value.suggestions.filter(sg => sg.appointmentId === id && sg.status === 'booked').forEach(sg => { sg.status = 'dropped'; sg.droppedBy = 'az időpont törlése a tételekkel együtt'; sg.appointmentId = null })
+      fate = 'az időpont a tételekkel együtt törölve'
     } else {
       // a lemondott/törölt időponthoz kötött javasolt kezelés visszakerül az „egyeztetendő” listára
       db.value.suggestions.filter(sg => sg.appointmentId === id && sg.status === 'booked').forEach(sg => { sg.status = 'new'; sg.appointmentId = null })
+      // v2.4 11. pont 5.: a nem javaslatból származó tételek is visszakerülnek „javasolt – még nincs időpont” állapotba (Egyeztetendő kezelések)
+      const plain = (a.items || []).filter(i => !i.suggestionId)
+      plain.forEach(i => {
+        const sg = { id: uid(), patientId: a.patientId, recordId: null, doctorId: a.doctorId, createdAt: today(), tooth: i.tooth, typeId: i.typeId, surfaces: [...i.surfaces], note: 'törölt időpontból: ' + a.date + ' ' + a.start, urgency: 'recommended' as const, due: null, status: 'new' as const, contacts: [], appointmentId: null, performerId: i.doctorId || a.doctorId, confirms: [] }
+        db.value.suggestions.push(sg); sgIds.push(sg.id)
+      })
+      if (plain.length) fate = `a tételek (${plain.length + sgIds.length - plain.length}) visszakerültek az egyeztetendő kezelések közé`
     }
-    const d: DeletedAppt = { id: uid(), appt: JSON.parse(JSON.stringify(a)), kind: o.kind, reason: o.reason, at: new Date().toISOString(), by: o.by || '', fate, suggestionIds: sgIds }
+    const d: DeletedAppt = { id: uid(), appt: JSON.parse(JSON.stringify(a)), kind: o.kind, reason: o.reason, at: new Date().toISOString(), by: o.by || '', fate, suggestionIds: sgIds, notified: o.notified }
     db.value.deleted.push(d)
     db.value.appointments = db.value.appointments.filter(x => x.id !== id)
     return d
@@ -68,7 +82,7 @@ export const useAppointmentStore = defineStore('appointment', () => {
     if (byId(d.appt.id)) return { ok: false, why: 'az időpont már létezik' }
     const a = JSON.parse(JSON.stringify(d.appt)) as Appointment
     db.value.appointments.push(a)
-    d.suggestionIds.forEach(id => { const sg = db.value.suggestions.find(x => x.id === id); if (sg && (sg.status === 'new' || sg.status === 'contacted' || sg.status === 'postponed')) { sg.status = 'booked'; sg.appointmentId = a.id } })
+    d.suggestionIds.forEach(id => { const sg = db.value.suggestions.find(x => x.id === id); if (sg && (sg.status === 'new' || sg.status === 'contacted' || sg.status === 'postponed' || (sg.status === 'dropped' && !!sg.droppedBy?.startsWith('az időpont törlése')))) { sg.status = 'booked'; sg.appointmentId = a.id } })
     db.value.deleted = db.value.deleted.filter(x => x.id !== delId)
     return { ok: true }
   }
@@ -129,5 +143,5 @@ export const useAppointmentStore = defineStore('appointment', () => {
   })
   const defaultBookingDate = () => (dow(today()) <= 5 ? today() : addDays(today(), 8 - dow(today())))
 
-  return { calMode, calDate, byId, risk, price, isDone, calNav, openDay, create, update, remove, cancel, restore, moveItems, merge, deletedOf, doneReply, isLateCancel, toggleNoShow, setLate, simulateReply, clearSignal, signals, sendNow, setBuffer, weekList, defaultBookingDate }
+  return { calMode, calDate, highlight, showInCalendar, byId, risk, price, isDone, calNav, openDay, create, update, remove, cancel, restore, moveItems, merge, deletedOf, doneReply, isLateCancel, toggleNoShow, setLate, simulateReply, clearSignal, signals, sendNow, setBuffer, weekList, defaultBookingDate }
 })

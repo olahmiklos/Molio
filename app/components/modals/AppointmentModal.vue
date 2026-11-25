@@ -13,6 +13,8 @@ import ApptRemoveModal from './ApptRemoveModal.vue'
 import ApptMergeModal from './ApptMergeModal.vue'
 import InformModal from './InformModal.vue'
 import { patientFuture, sugSourceText } from '~/utils/v22'
+import { conflictsFor } from '~/utils/conflicts'
+import { isWorking, notWorkingText } from '~/utils/schedule'
 
 const props = defineProps<{ id: string }>()
 const data = useDataStore()
@@ -28,6 +30,16 @@ const rk = computed(() => (a.value ? ap.risk(a.value) : null))
 const end = computed(() => (a.value ? toMin(a.value.start) + a.value.dur : 0))
 const maxBuf = computed(() => (a.value ? Math.max(0, db.value.settings.endHour * 60 - end.value) : 0))
 
+/* v2.4 7. pont: az időpont ablaka elöl mutatja, kivel ütközik, és egy gombbal megnyitható az ütköző másik időpont */
+const confs = computed(() => (a.value && !rec.value ? conflictsFor(db.value, a.value, x => !!recordForAppt(db.value, x.id)) : []))
+const pn = (pid: string) => db.value.patients.find(x => x.id === pid)?.name || '?'
+function openOther(id: string) { ui.close(); void import('./AppointmentModal.vue').then(m => ui.open(m.default, { id })) }
+function intended(otherId: string) {
+  const x = a.value; if (!x) return
+  x.overlapOk = [...(x.overlapOk || []).filter(o => o.id !== otherId), { id: otherId, at: new Date().toISOString(), by: 'asszisztens' }]
+  ui.toast('Szándékos átfedésként jóváhagyva – a naptárban halványabb jelzés marad')
+}
+const offSched = computed(() => !!a.value && !rec.value && a.value.date >= today() && !isWorking(db.value, a.value.doctorId, a.value.date, a.value.start, a.value.dur + (a.value.buffer || 0)))
 function cancel() { ui.open(ApptRemoveModal, { id: props.id, kind: 'cancel' }) }
 function remove() { ui.open(ApptRemoveModal, { id: props.id, kind: 'delete' }) }
 const futureApt = computed(() => !!a.value && a.value.date >= today() && !rec.value)
@@ -50,6 +62,14 @@ function setBuf(v: string) { ap.setBuffer(props.id, Number(v)); ui.toast(Number(
 
 <template>
   <ModalShell v-if="a && p" title="Időpont" wide>
+    <div v-for="c in confs" :key="c.other.id" :class="c.ok ? 'hint' : 'err'" class="row" style="gap:8px" data-test="utkozes-ablak">
+      <span><b>{{ c.ok ? 'Szándékos átfedés' : c.hard ? '‼ Ütközik' : '‼ A ráhagyás ütközik' }}:</b> {{ pn(c.other.patientId) }} · {{ c.other.start }}–{{ fromMin(toMin(c.other.start) + c.other.dur) }} · {{ typeNames(db, c.other.typeIds) }}<template v-if="c.ok"> – jóváhagyta: {{ (a.overlapOk || c.other.overlapOk || []).find(o => o.id === c.other.id || o.id === a!.id)?.by || 'munkatárs' }}</template></span>
+      <div class="spacer" />
+      <button class="btn sm" @click="openOther(c.other.id)">Az ütköző időpont megnyitása</button>
+      <button v-if="!c.ok" class="btn sm" @click="intended(c.other.id)">Szándékos átfedés</button>
+    </div>
+    <div v-if="offSched" class="warn" data-test="beosztason-kivul">Az időpont a beosztáson kívül esik: {{ notWorkingText(db, a.doctorId, a.date) }}. Helyezd át, vagy értesítsd a pácienst.</div>
+    <div v-if="a.urgent" class="hint small">Sürgős eset – a beosztáson kívüli foglalást {{ a.urgent.by }} indoklással felülbírálta: „{{ a.urgent.reason }}”.</div>
     <div class="kv">
       <div>Páciens</div>
       <div><b>{{ p.name }}</b> <span class="muted">(szül. {{ fmtBirth(p.birth) }})</span></div>
@@ -81,6 +101,7 @@ function setBuf(v: string) { ap.setBuffer(props.id, Number(v)); ui.toast(Number(
         </div>
       </template>
       <template v-if="a.note"><div>Megjegyzés</div><div>{{ a.note }}</div></template>
+      <template v-if="a.log?.length"><div>Napló</div><div class="small muted"><div v-for="(l, k) in a.log.slice(-4)" :key="k">{{ new Date(l.at).toLocaleString('hu-HU') }} · {{ l.by }}: {{ l.note }}</div></div></template>
       <template v-if="p.internalNote"><div>Belső megjegyzés</div><div><InternalNote :text="p.internalNote" /></div></template>
       <template v-if="a.cancelSignal && !rec">
         <div>Lemondás jelezve</div>

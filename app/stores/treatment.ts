@@ -136,6 +136,13 @@ export const useTreatmentStore = defineStore('treatment', () => {
     parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
     restoreDraft()
   }
+  /** v2.4 8. pont 9.: indítás a páciens előjegyzett (javasolt) kezelési tételéből: a „Mai feladat” a tételből készül */
+  function startFromSuggestion(sid: string) {
+    const g = db.value.suggestions.find(x => x.id === sid); if (!g) return
+    s.value = base({ patientId: g.patientId, doctorId: g.performerId || patients.byId(g.patientId)?.doctorId || db.value.doctors[0]!.id, date: today(), time: nowSlot(), planItems: [{ tooth: g.tooth, typeId: g.typeId, surfaces: [...g.surfaces], suggestionId: g.id }], hasPlan: true, planned: g.tooth ? { teeth: [g.tooth], surfaces: g.surfaces.length ? { [g.tooth]: [...g.surfaces] } : {} } : null })
+    parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
+    restoreDraft()
+  }
   function startNew(pid: string) {
     const pdoc = patients.byId(pid)?.doctorId
     s.value = base({ patientId: pid, doctorId: pdoc || db.value.doctors[0]!.id, date: today(), time: nowSlot() })
@@ -786,7 +793,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
 
   return {
     s, parsed, statusParsed, patient, dentition, active,
-    startFromAppointment, startNew, editRecord, setText, applyParse, toggleTooth, focus, toggleType,
+    startFromAppointment, startFromSuggestion, startNew, editRecord, setText, applyParse, toggleTooth, focus, toggleType,
     items, doneItems, itemTotal, setItemState, removeItem, addItem, itemParse, suggestList, addSuggestion, removeSuggestion, setSuggestion, statusChanges, setStatusChange, sideConflicts, confirmConflict, dictStatus,
     surfaces, toggleSurface, needsSurface, missingSurface, extendedTeeth, offDentition,
     rows, toReview, rowsReview, flags, pendingFlags, resolveFlag, swapTooth, pipe, promptText, runAi, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
