@@ -4,10 +4,20 @@ import { defineStore } from 'pinia'
 import { DEFAULT_COMPAT } from '~/utils/dict/review'
 import type { PersonalRule } from '~/utils/dict/pipeline'
 import type { ThresholdKey } from '~/utils/dict/similar'
-import { buildInfo, APP_VERSION, SPEC } from '~/utils/meta'
+import { buildInfo, APP_VERSION, SPEC, DEV_TOOLS, BRANCH_TAG } from '~/utils/meta'
+import type { PromptStyle } from '~/utils/dict/prompt'
+import type { ResampleMode } from '~/utils/dict/audio'
+import type { Macro } from '~/utils/dict/macro'
+import { looksPersonal } from '~/utils/dict/learn'
 
 export type Recognizer = 'whisper' | 'browser'
-export interface DictPrefs { recognizer: Recognizer; livePreview: boolean; noise: boolean; ai: boolean; threshold: ThresholdKey; sugMinCount: number; sugMinRatio: number }
+export interface DictPrefs {
+  recognizer: Recognizer; livePreview: boolean; noise: boolean; ai: boolean; threshold: ThresholdKey; sugMinCount: number; sugMinRatio: number
+  /** v2.4 12. pont C): a szakszó-szöveg formája, az átalakítás módja, a beszédészlelés (a main ágon rögzített, a teszt ágon a laborban állítható) */
+  promptStyle: PromptStyle; resample: ResampleMode; vad: boolean
+}
+/** v2.4 12. pont B): a main ágon a fogorvos semmit nem állít a felismerésen – a teszt ágon legjobbnak mért, rögzített beállítás (csak kiadással változik) */
+export const FIXED_PREFS: Omit<DictPrefs, 'ai' | 'sugMinCount' | 'sugMinRatio'> = { recognizer: 'whisper', livePreview: true, noise: true, threshold: 'medium', promptStyle: 'mondat', resample: 'uj', vad: true }
 export interface UnknownTerm { term: string; count: number; first: string; last: string; example: string }
 export interface LogEntry {
   id: string; at: string
@@ -30,7 +40,18 @@ export interface QtyRule { pattern: string; outcome: string; label: string }
 const KEY = 'molio-dict-v23'
 const defaults = () => ({
   deviceId: Math.random().toString(36).slice(2) + Date.now().toString(36),
-  prefs: { recognizer: 'whisper', livePreview: true, noise: true, ai: false, threshold: 'medium', sugMinCount: 5, sugMinRatio: 0.8 } as DictPrefs,
+  // v2.4 19/2: az AI-értelmezés a demóban is alapból bekapcsolt (a keret elfogyásakor magától kikapcsol)
+  prefs: { recognizer: 'whisper', livePreview: true, noise: true, ai: true, threshold: 'medium', sugMinCount: 5, sugMinRatio: 0.8, promptStyle: 'mondat', resample: 'uj', vad: true } as DictPrefs,
+  /** v2.4: egyszeri átállás (az AI alapból bekapcsolva) megtörtént-e */
+  v24: false,
+  /** v2.4 15. pont: személyes rövidítések (makrók) */
+  macros: [] as Macro[],
+  /** v2.4 15. pont: a mentett tételkombinációk (az ajánláshoz), az elvetett ajánlások */
+  combos: [] as { sig: string; at: string }[],
+  dismissedCombos: [] as string[],
+  /** v2.4 6. pont: a központi mentésre váró tanult javítások / rövidítések, és a központból utoljára letöltött állapot ideje */
+  learnQueue: [] as { kind: 'rule' | 'macro'; data: unknown }[],
+  learnSyncedAt: '',
   personal: [] as PersonalRule[],
   qtyRules: [] as QtyRule[],
   extraFilter: [] as string[],
@@ -46,7 +67,15 @@ const defaults = () => ({
 })
 export type DictState = ReturnType<typeof defaults>
 const load = (): DictState => {
-  try { const j = JSON.parse(localStorage.getItem(KEY) || 'null'); if (j) { const d = defaults(); return { ...d, ...j, prefs: { ...d.prefs, ...j.prefs }, aiStats: { ...d.aiStats, ...j.aiStats } } } } catch { /* alapértékek */ }
+  try {
+    const j = JSON.parse(localStorage.getItem(KEY) || 'null')
+    if (j) {
+      const d = defaults(); const out = { ...d, ...j, prefs: { ...d.prefs, ...j.prefs }, aiStats: { ...d.aiStats, ...j.aiStats } } as DictState
+      // v2.4 19/2: az AI-értelmezés egyszer bekapcsolódik (a korábbi „alapból kikapcsolt” állapot helyett); utána a felhasználó döntése marad
+      if (!j.v24) { out.prefs.ai = true; out.v24 = true }
+      return out
+    }
+  } catch { /* alapértékek */ }
   return defaults()
 }
 /** az anonimizált tárolóba csak szakmai tartalom megy: hosszú számsorok (TAJ, telefon) kimaradnak */
@@ -56,15 +85,17 @@ export const useDictStore = defineStore('dict', () => {
   const s = reactive<DictState>(defaults())
   const ready = ref(false)
   /** az AI-értelmezés keretének becslése (a Workerből; a hívás után frissül) */
-  const aiInfo = reactive<{ leftPct: number | null; model: string; exhausted: boolean }>({ leftPct: null, model: '', exhausted: false })
+  const aiInfo = reactive<{ leftPct: number | null; model: string; exhausted: boolean; note: string }>({ leftPct: null, model: '', exhausted: false, note: '' })
   let timer: ReturnType<typeof setTimeout> | null = null
   function init() {
     if (ready.value || typeof localStorage === 'undefined') return
     Object.assign(s, load()); ready.value = true
     watch(s, () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify(s)) } catch { /* tele a tároló */ } }, 300) }, { deep: true })
-    window.addEventListener('online', () => { void flush() })
-    void flush()
+    window.addEventListener('online', () => { void flush(); void syncLearn() })
+    void flush(); void syncLearn(); void pullLearn()
   }
+  /** a ténylegesen használt beállítás: a main ágon a rögzített (FIXED_PREFS), a teszt ágon a felhasználói / labor beállítás */
+  const eff = computed<DictPrefs>(() => (DEV_TOOLS ? s.prefs : { ...s.prefs, ...FIXED_PREFS }))
   const trained = computed(() => s.training.length > 0)
   const lastTrain = computed(() => s.training[s.training.length - 1] || null)
   const activePersonal = computed(() => s.personal.filter(p => p.active))
@@ -78,6 +109,49 @@ export const useDictStore = defineStore('dict', () => {
     s.personal.push(r); return r
   }
   const removePersonal = (id: string) => { s.personal = s.personal.filter(p => p.id !== id) }
+
+  /* ---------- v2.4 6. pont: öntanulás – a javítás maga a jóváhagyás; központi mentés ágak szerint ---------- */
+  /** tanult szabály a kézi javításból: kiejtési (a beszélőre) vagy szakmai (a rendelő minden felhasználójára); azonnal érvényes */
+  function learn(from: string, to: string, o: { scope: 'szemely' | 'rendelo'; cat: string; source?: PersonalRule['source'] }) {
+    const f = from.trim(), t = to.trim()
+    if (!f || !t || f.toLowerCase() === t.toLowerCase() || looksPersonal(f) || looksPersonal(t)) return null
+    const ex = s.personal.find(p => p.from.toLowerCase() === f.toLowerCase())
+    // ellentmondó javításnál a legutóbbi érvényes, és a program jelzi az ütközést
+    const conflict = !!ex && ex.to.toLowerCase() !== t.toLowerCase() ? ex.to : null
+    const r = addPersonal(f, t, o.source || 'javitas', s.prefs.recognizer)
+    if (!r) return null
+    Object.assign(r, { scope: o.scope, cat: o.cat, branch: BRANCH_TAG(), uses: r.uses || 0, applied: r.applied || 0 })
+    s.learnQueue.push({ kind: 'rule', data: { from: r.from, to: r.to, scope: o.scope, cat: o.cat, at: new Date().toISOString() } })
+    void syncLearn()
+    return { rule: r, conflict }
+  }
+  let syncing = false
+  /** a központi mentés kötegben (egy írás); hálózati hiba esetén az eszközön várakozik */
+  async function syncLearn() {
+    if (syncing || !s.learnQueue.length || typeof navigator === 'undefined' || !navigator.onLine) return
+    syncing = true
+    const batch = s.learnQueue.slice(0, 60)
+    try {
+      const r = await fetch('/api/diktalas/tanult-javitas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: s.deviceId, speaker: 'demo', rules: batch.filter(b => b.kind === 'rule').map(b => b.data), macros: batch.filter(b => b.kind === 'macro').map(b => b.data) }) })
+      if (r.ok) { const j = await r.json().catch(() => ({})) as { stored?: boolean }; if (j.stored !== false) s.learnQueue.splice(0, batch.length) }
+    } catch { /* később újra */ } finally { syncing = false }
+  }
+  /** a központilag mentett javítások letöltése (eszközcsere, böngészőtörlés után is megmaradnak); naponta legfeljebb egyszer */
+  async function pullLearn(force = false) {
+    if (typeof navigator === 'undefined' || !navigator.onLine) return null
+    if (!force && s.learnSyncedAt && Date.now() - Date.parse(s.learnSyncedAt) < 6 * 3600000) return null
+    try {
+      const r = await fetch('/api/diktalas/tanult-javitas'); if (!r.ok) return null
+      const j = await r.json() as { batches?: { branch: string; rules?: { from: string; to: string; scope?: string; cat?: string }[]; macros?: Macro[] }[] }
+      let n = 0
+      ;(j.batches || []).forEach(b => {
+        ;(b.rules || []).forEach(x => { if (x?.from && x?.to && !s.personal.some(p => p.from.toLowerCase() === x.from.toLowerCase())) { const p = addPersonal(x.from, x.to, 'kozponti'); if (p) { Object.assign(p, { scope: x.scope || 'rendelo', cat: x.cat || 'egyéb', branch: b.branch }); n++ } } })
+        ;(b.macros || []).forEach(m => { if (m?.id && m.name && !s.macros.some(x => x.id === m.id)) { s.macros.push({ ...m, branch: b.branch }); n++ } })
+      })
+      s.learnSyncedAt = new Date().toISOString()
+      return { n, raw: j }
+    } catch { return null }
+  }
 
   /* ---------- ismeretlen kifejezések (4. pont) ---------- */
   function noteUnknown(terms: string[], example: string) {
@@ -155,5 +229,5 @@ export const useDictStore = defineStore('dict', () => {
     s.remindN++
     return s.remindN === 1 || s.remindN % 5 === 0
   }
-  return { s, ready, aiInfo, init, trained, lastTrain, activePersonal, filterList, addPersonal, removePersonal, noteUnknown, dropUnknown, addLog, flush, suggestions, acceptSuggestion, dismissSuggestion, rates, addTraining, shouldOffer }
+  return { s, ready, aiInfo, init, eff, learn, syncLearn, pullLearn, trained, lastTrain, activePersonal, filterList, addPersonal, removePersonal, noteUnknown, dropUnknown, addLog, flush, suggestions, acceptSuggestion, dismissSuggestion, rates, addTraining, shouldOffer }
 })

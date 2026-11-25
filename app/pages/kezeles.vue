@@ -22,6 +22,9 @@ import { useOfficeStore } from '~/stores/office'
 import { fmtDate, fmtPrice } from '~/utils/dates'
 import { useDictStore } from '~/stores/dict'
 import type { DictResult } from '~/stores/voice'
+import { DEV_TOOLS } from '~/utils/meta'
+import NoSaidModal from '~/components/modals/NoSaidModal.vue'
+import MacroModal from '~/components/modals/MacroModal.vue'
 
 const data = useDataStore()
 const tx = useTreatmentStore()
@@ -37,10 +40,12 @@ onMounted(() => { voice.detect(); dict.init() })
 /** a diktálás végén (a Whisper szövegének megérkezése után) azonnal feldolgozunk: az előnézet (fogak, tételek, anyagok) azonnal kész, csak a ⚠ sorokat kell megerősíteni (spec v2.2, 4. pont; v2.3, 7. pont) */
 function dictDone(r: DictResult) {
   if (s.value?.mode === 'status') return
-  if (r.noSpeech) { ui.toast('Nem érkezett értelmezhető beszéd – kérjük, ismételje meg.'); return }
+  if (r.netFail) { ui.toast('A kapcsolat megszakadt – a diktálás nem készült el, mondja újra.'); return }
+  if (r.noSpeech) { ui.toast('Nem sikerült megérteni – kérjük, mondja újra.'); return }
   tx.finishDictation(r)
-  if (tx.toReview) { open.mats = true; open.chk = true }
-  ui.toast(tx.toReview ? `Az előnézet elkészült – ${tx.toReview} ⚠ sort meg kell erősíteni` : 'Az előnézet elkészült – ellenőrizd, majd mentsd')
+  open.dict = true; open.type = true
+  if (tx.toReview) { open.mats = true }
+  ui.toast(tx.toReview ? `Az eredmény elkészült – ${tx.toReview} ellenőrizendő sor vár megerősítésre` : 'Az eredmény elkészült – nézd át, majd mentsd')
 }
 onBeforeUnmount(() => voice.stop())
 
@@ -54,13 +59,15 @@ const SAMPLES = [
 const STATUS_SAMPLE = '18-as és 28-as hiányzik, 16-os korona, 36-os tömött, 46-os gyökérkezelt és koronás, 13-tól 23-ig ép, a többi ép.'
 const STATUS_SAMPLE_PRIMARY = '55-ös szuvas, 64-es tömött, jobb alsó római négyes tömött, a többi ép.'
 
-const open = reactive({ chk: true, dict: false, type: false, stc: true, sug: true, mats: false, att: false, sum: false, status: true, ster: false, consent: false })
+const open = reactive({ dict: true, type: true, stc: true, sug: true, mats: true, att: false, sum: false, status: true, ster: false, consent: false })
 const dtText = computed({ get: () => s.value?.text || '', set: v => tx.setText(v) })
 const stText = computed({ get: () => s.value?.statusText || '', set: v => tx.setStatusText(v) })
 
 async function toggleMic() {
   if (voice.recording) { voice.stop(); return }
   if (voice.processing) return
+  // v2.4 18. pont: hálózat nélkül a diktálás nem érhető el
+  if (!ui.online) { ui.toast('Nincs hálózati kapcsolat – a diktálás most nem érhető el. A kezelést kézzel is rögzítheti.'); return }
   // az első diktálásnál (és időnként, amíg nincs betanítás) felajánljuk a betanítást; kihagyható
   if (s.value?.mode !== 'status' && dict.shouldOffer() && await ui.confirm('Javasoljuk a <b>diktálás betanítását</b> (kb. 2 perc): megmutatja, hol téveszt a felismerő ezen az eszközön, és személyes javításokat készít. Kihagyható, és a Beállításokban bármikor elindítható.', 'Betanítás indítása', false, 'Most kihagyom')) { navigateTo('/beallitasok?tab=train'); return }
   const ctx = { prompt: () => tx.promptText(), onDone: dictDone }
@@ -141,7 +148,12 @@ function approve() {
   const res = tx.approve()
   if (!res) return
   if ('error' in res) { ui.toast(res.error!); return }
-  ui.toast('Kezelés mentve, anyagok levonva' + (res.statusChanged ? `, ${res.statusChanged} fogállapot rögzítve` : '') + (res.suggested ? `, ${res.suggested} javaslat a teendők között` : ''))
+  ui.toast('Kezelés mentve, anyagok levonva' + (res.statusChanged ? `, ${res.statusChanged} fogállapot rögzítve` : '') + (res.suggested ? `, ${res.suggested} javaslat a teendők között` : '') + (res.infoQueued ? ', a tájékoztató az orvos jóváhagyására vár a Teendők között' : ''))
+  // v2.4 15. pont: frissítési javaslat / rövidítés ajánlása (halvány, egy koppintással elfogadható)
+  const mn = res.macroNotes?.[0]
+  if (mn) setTimeout(() => ui.toast(mn.text, mn.kind === 'recommend'
+    ? { label: 'Rövidítést készítek', fn: () => ui.open(MacroModal, { preset: mn.data }) }
+    : { label: 'Frissítem', fn: () => { const d = mn.data as { macroId: string; item: string; qty: number }; const m = dict.s.macros.find(x => x.id === d.macroId); const l = m?.lines.find(x => x.kind === 'mat' && x.id === d.item); if (m && l) { l.qty = d.qty; m.mods = {}; ui.toast('A rövidítés alapértéke frissítve') } } }), 3000)
   if (res.warns.length || Object.keys(res.statusOffer).length || res.hasInfo) ui.open(ApproveResultModal, { warns: res.warns, statusOffer: res.statusOffer, patientId: res.patientId, recordId: res.recordId, hasInfo: res.hasInfo })
   navigateTo(`/paciensek/${res.patientId}`)
 }
@@ -174,7 +186,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
   </div>
 
   <div v-else>
-    <!-- fejléc: páciens és diktálás -->
+    <!-- fejléc: páciens -->
     <div class="tx-head" :style="s.mode === 'status' ? 'border-top-color:var(--purple)' : ''">
       <div>
         <div class="small muted" style="font-weight:700;letter-spacing:.08em;text-transform:uppercase">{{ s.mode === 'status' ? 'Fogazati státusz felvétele' : s.recordId ? 'Kezelés szerkesztése' : 'Kezelés' }} · {{ fmtLong(s.date) }}, {{ s.time }}</div>
@@ -184,38 +196,29 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
       <div class="spacer" />
       <select v-model="s.doctorId" class="inp auto" aria-label="Orvos"><option v-for="d in db.doctors" :key="d.id" :value="d.id">{{ d.name }}</option></select>
       <button v-if="s.mode === 'treat'" class="btn" @click="startStatus">🦷 Státuszfelvétel</button>
-      <button class="mic" :class="{ rec: voice.recording, status: s.mode === 'status' && !voice.recording }" :disabled="!voice.supported || voice.processing" @click="toggleMic">
-        <AppIcon :name="voice.recording ? 'stop' : 'mic'" :size="18" />{{ voice.recording ? `Leállítás (${voice.remaining} s)` : voice.processing ? 'Felismerés…' : s.mode === 'status' ? 'Státusz diktálása' : 'Diktálás' }}
-      </button>
     </div>
-    <div class="ai-note">
-      <b>Demó v2.3:</b> a diktálást a <b>Whisper</b> hangfelismerő alakítja szöveggé a Cloudflare szerverén (szakszó-listával; ha nem érhető el, a böngésző beépített felismerője a tartalék), a mezőket szabályok töltik ki – az AI-értelmezés kapcsolóval kipróbálható.
-      Egy felvétel legfeljebb {{ DICTATION_LIMIT_S }} másodperc lehet (a hátralévő idő a gombon látszik); utána újra indíthatod.
-      A pontos felismeréshez a hang a Cloudflare szerverére kerül feldolgozásra, és nem tárolódik; az élő előnézethez a böngésző szolgáltatója (Apple / Google) is kaphatja. Csak kitalált adatot diktálj.
+    <!-- v2.4 8. pont: a legfelső (rögzített) sáv – „Mai feladat” rövid összefoglaló a diktálás gomb mellett -->
+    <div class="task-bar">
+      <div class="tb-row" style="align-items:flex-start">
+        <TaskBar v-if="s.mode === 'treat' && !s.recordId" />
+        <div v-else class="small muted" style="flex:1">{{ s.mode === 'status' ? 'Fogazati státusz diktálása: mondd fogról fogra az állapotot.' : 'Lezárt kezelés szerkesztése.' }}</div>
+        <button class="mic" :class="{ rec: voice.recording, status: s.mode === 'status' && !voice.recording }" :disabled="!voice.supported || voice.processing || !ui.online" :title="!ui.online ? 'Nincs hálózati kapcsolat – a diktálás most nem érhető el' : ''" data-test="diktalas-gomb" @click="toggleMic">
+          <AppIcon :name="voice.recording ? 'stop' : 'mic'" :size="18" />{{ voice.recording ? `Leállítás (${voice.remaining} s)` : voice.processing ? 'Feldolgozás…' : s.mode === 'status' ? 'Státusz diktálása' : 'Diktálás' }}
+        </button>
+      </div>
+    </div>
+    <div v-if="DEV_TOOLS" class="ai-note">
+      <b>Demó v2.4 (teszt):</b> a diktálást a <b>Whisper</b> hangfelismerő alakítja szöveggé a Cloudflare szerverén (rövid mondatos szakszó-szöveggel); a böngésző felismerője a háttérben fut – ha a Whisper szövege értelmetlen vagy nem érhető el, magától erre vált. A mezőket szabályok töltik ki, az AI-értelmezés alapból bekapcsolt.
+      Egy felvétel legfeljebb {{ DICTATION_LIMIT_S }} másodperc lehet. A hang nem tárolódik; az élő előnézethez a böngésző szolgáltatója (Apple / Google) is kaphatja. Csak kitalált adatot diktálj.
       <span v-if="!voice.supported"><br><b>Ez a böngésző nem támogatja a diktálást</b> – gépeld be a szöveget (Chrome, Edge vagy Safari ajánlott).</span>
     </div>
+    <div v-else class="small muted" style="margin:4px 2px 0" data-test="bemutato-jelzes">Bemutató – csak kitalált adatot diktáljon. A bemutató a látogatás idejét és az IP-címet naplózza.<span v-if="!voice.supported"> Ez a böngésző nem támogatja a diktálást – a szöveg begépelhető.</span></div>
     <div v-if="tx.restored && s?.text" class="hint">Mentetlen diktálási piszkozat visszaállítva (7 napig őrizzük, a készletet nem érinti). Mentés után a piszkozat törlődik.</div>
     <DictBar />
 
-    <!-- fogtérkép középen -->
-    <div class="tx-chart">
-      <ChartPanel :patient-id="p.id" :sess-key="s.key" :selected="s.mode === 'treat' ? s.teeth : []" :focus="s.mode === 'treat' ? focus : null"
-        :current="s.mode === 'treat' ? tx.surfaces : undefined" :marks="s.mode === 'treat' ? marks : undefined" :hl="hl" @hover="hl = $event" :draft="s.mode === 'status' && Object.keys(tx.statusDraft).length ? tx.statusDraft : null" :flags="flags" clickable @tooth="chartClick" />
-      <template v-if="s.mode === 'treat'">
-        <div class="row" style="margin-top:12px">
-          <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--slate)">Érintett fogak:</b>
-          <span v-for="n in s.teeth" :key="n" class="tchip" style="cursor:pointer;font-size:12.5px;padding:4px 9px" :style="focus === n ? 'box-shadow:0 0 0 2px #fff,0 0 0 4px var(--pink)' : ''" @click="tx.focus(n)">
-            {{ surfaceStr(n, tx.surfaces[n]) }} <span style="opacity:.8" title="Levétel" @click.stop="tx.toggleTooth(n)">×</span>
-          </span>
-          <span v-if="!s.teeth.length" class="muted small">Kattints a fogra, vagy diktáld („36-os fog”, „jobb alsó hatos”).</span>
-          <template v-if="planned?.teeth.length"><span class="small muted">· tervezett:</span><span v-for="t in planned.teeth" :key="'p' + t" class="tchip plan">{{ teethStr([t], planned.surfaces) }}</span></template>
-          <span v-if="tx.extendedTeeth.length" class="badge b-yellow">kezelés közben bővítve: {{ tx.extendedTeeth.map(n => surfaceStr(n, tx.surfaces[n])).join(', ') }}</span>
-        </div>
-        <div v-if="focus && s.teeth.includes(focus)" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
-          <SurfacePicker :n="focus" :value="tx.surfaces[focus] || []" :planned="planned?.surfaces[focus] as Surface[] | undefined" @toggle="tx.toggleSurface(focus!, $event)" />
-        </div>
-        <div v-for="(msg, n) in flags" :key="n" class="warn" style="margin:8px 0 0">{{ toothLabel(Number(n)) }}: {{ msg }}</div>
-      </template>
+    <!-- fogtérkép (státuszfelvétel) -->
+    <div v-if="s.mode === 'status'" class="tx-chart">
+      <ChartPanel :patient-id="p.id" :sess-key="s.key" :selected="[]" :focus="null" :hl="hl" @hover="hl = $event" :draft="Object.keys(tx.statusDraft).length ? tx.statusDraft : null" :flags="flags" clickable @tooth="chartClick" />
     </div>
 
     <!-- státuszfelvétel -->
@@ -243,13 +246,15 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
     </details>
 
     <template v-if="s.mode === 'treat'">
-      <!-- diktálás és jegyzet -->
-      <details class="grp" :open="open.dict" @toggle="open.dict = ($event.target as HTMLDetailsElement).open">
-        <summary><span class="gi" style="background:var(--pink)"><AppIcon name="mic" :size="18" /></span><span class="gt">Diktálás és jegyzet</span><span class="gs">{{ words ? `${words} szó` : 'még üres' }}{{ s.teeth.length ? ` · fogak: ${s.teeth.join(', ')}` : '' }}</span><span class="chev">▾</span></summary>
+      <!-- diktálás és jegyzet; v2.4 13. pont: az ellenőrzés a kártya része, a „Nem ezt mondtam” gomb a fejléc jobb oldalán -->
+      <details class="grp" :class="{ flag: tx.pendingFlags.length }" :open="open.dict" @toggle="open.dict = ($event.target as HTMLDetailsElement).open">
+        <summary><span class="gi" style="background:var(--pink)"><AppIcon name="mic" :size="18" /></span><span class="gt">Diktálás és jegyzet</span><span class="gs">{{ words ? `${words} szó` : 'még üres' }}{{ s.teeth.length ? ` · fogak: ${s.teeth.join(', ')}` : '' }}</span><span v-if="tx.pendingFlags.length" class="flagdot">{{ tx.pendingFlags.length }}</span>
+          <button class="btn sm" style="margin-left:auto" type="button" data-test="nem-ezt" :disabled="!s.text.trim()" @click.stop.prevent="ui.open(NoSaidModal)">Nem ezt mondtam</button><span class="chev">▾</span></summary>
         <div class="gb">
           <div class="row" style="margin-bottom:8px">
             <span class="small muted">{{ voice.message || 'A teljes szöveg kezelési jegyzetként is megmarad, és bármikor javítható.' }}</span>
             <div class="spacer" />
+            <button v-if="!s.recordId && (tx.items.length || tx.rows.length)" class="btn sm" type="button" data-test="mentes-roviditeskent" @click="ui.open(MacroModal, { fromResult: true })">Mentés rövidítésként</button>
             <select class="inp auto" @change="insertSample(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''">
               <option value="">Minta diktálás beszúrása…</option>
               <option v-for="[l, t] in SAMPLES" :key="l" :value="t">{{ l }}</option>
@@ -257,14 +262,30 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
           </div>
           <textarea v-model="dtText" class="dt" placeholder="Pl.: 36-os fog, meziális és rágófelszíni kompozit tömés. Érzéstelenítés két ampullával, kérek öt tampont…" />
           <div v-if="tx.parsed.orphanSurfaces.length && !s.teeth.length" class="warn" style="margin-top:8px">Felszín hangzott el ({{ tx.parsed.orphanSurfaces.join(', ') }}), de fog nem – jelöld ki a fogat.</div>
+          <DictReview />
         </div>
       </details>
 
-      <!-- a diktálás ellenőrzése: egyetlen ⚠ lista (v2.3) -->
-      <details class="grp" :class="{ flag: tx.pendingFlags.length }" :open="open.chk" @toggle="open.chk = ($event.target as HTMLDetailsElement).open">
-        <summary><span class="gi" style="background:var(--orange)">⚠</span><span class="gt">Diktálás ellenőrzése</span><span class="gs">{{ tx.pendingFlags.length ? `${tx.pendingFlags.length} megerősítésre vár` : tx.flags.length ? 'minden jelzés rendben' : 'nincs jelzés' }}</span><span v-if="tx.pendingFlags.length" class="flagdot">{{ tx.pendingFlags.length }}</span><span class="chev">▾</span></summary>
-        <div class="gb"><DictReview /></div>
-      </details>
+      <!-- kezelési tételek: fogtérkép (v2.4 14. pont: a diktálás kártyája alatt) -->
+      <div class="tx-chart">
+        <ChartPanel :patient-id="p.id" :sess-key="s.key" :selected="s.teeth" :focus="focus"
+          :current="tx.surfaces" :marks="marks" :hl="hl" @hover="hl = $event" :draft="null" :flags="flags" clickable @tooth="chartClick" />
+        <template v-if="true">
+          <div class="row" style="margin-top:12px">
+            <b class="small" style="text-transform:uppercase;letter-spacing:.1em;color:var(--slate)">Érintett fogak:</b>
+            <span v-for="n in s.teeth" :key="n" class="tchip" style="cursor:pointer;font-size:12.5px;padding:4px 9px" :style="focus === n ? 'box-shadow:0 0 0 2px #fff,0 0 0 4px var(--pink)' : ''" @click="tx.focus(n)">
+              {{ surfaceStr(n, tx.surfaces[n]) }} <span style="opacity:.8" title="Levétel" @click.stop="tx.toggleTooth(n)">×</span>
+            </span>
+            <span v-if="!s.teeth.length" class="muted small">Kattints a fogra, vagy diktáld („36-os fog”, „jobb alsó hatos”).</span>
+            <template v-if="planned?.teeth.length"><span class="small muted">· tervezett:</span><span v-for="t in planned.teeth" :key="'p' + t" class="tchip plan">{{ teethStr([t], planned.surfaces) }}</span></template>
+            <span v-if="tx.extendedTeeth.length" class="badge b-yellow">kezelés közben bővítve: {{ tx.extendedTeeth.map(n => surfaceStr(n, tx.surfaces[n])).join(', ') }}</span>
+          </div>
+          <div v-if="focus && s.teeth.includes(focus)" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+            <SurfacePicker :n="focus" :value="tx.surfaces[focus] || []" :planned="planned?.surfaces[focus] as Surface[] | undefined" @toggle="tx.toggleSurface(focus!, $event)" />
+          </div>
+          <div v-for="(msg, n) in flags" :key="n" class="warn" style="margin:8px 0 0">{{ toothLabel(Number(n)) }}: {{ msg }}</div>
+        </template>
+      </div>
 
       <!-- oldal és fogszám ellentmondása (4. pont) -->
       <div v-for="c in tx.sideConflicts" :key="c.key" class="warn" style="margin:8px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
@@ -286,7 +307,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
                 <tr v-for="i in tx.items" :key="i.key" :class="{ off: i.state === 'postponed' }" :style="hl && hl === i.tooth ? 'background:#fff1f6' : ''" @mouseenter="hl = i.tooth" @mouseleave="hl = null">
                   <td><b>{{ i.tooth ? surfaceStr(i.tooth, i.surfaces) : '–' }}</b></td>
                   <td>{{ tname(i.typeId) }}</td>
-                  <td class="hide-m"><span class="badge" :class="ORIGIN[i.origin][0]">{{ ORIGIN[i.origin][1] }}</span></td>
+                  <td class="hide-m"><span class="badge" :class="ORIGIN[i.origin][0]">{{ ORIGIN[i.origin][1] }}</span><span v-if="tx.macroOf(i.tooth, i.typeId)" class="badge b-gray" style="margin-left:4px">rövidítésből: {{ tx.macroOf(i.tooth, i.typeId) }}</span></td>
                   <td><select class="inp auto" :value="i.state" @change="tx.setItemState(i.key, ($event.target as HTMLSelectElement).value as 'done' | 'postponed')"><option value="done">elvégezve</option><option value="postponed">elhalasztva</option></select></td>
                   <td class="r">{{ i.state === 'done' ? fmtFt(i.fee) : '–' }}</td>
                   <td><button class="btn sm" title="Tétel törlése" @click="tx.removeItem(i.key)">×</button></td>
@@ -303,6 +324,51 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
             <button class="btn sm" @click="addItem">+ Hozzáadás</button>
           </div>
           <div class="small muted" style="margin-top:6px">Az előjegyzett tételek kék, a kezelés közben hozzáadottak borostyán jelölést kapnak a fogtérképen és a kartonban. Az elhalasztott tétel nem kerül díjba és anyagfelhasználásba.</div>
+        </div>
+      </details>
+
+      <!-- felhasznált anyagok (v2.4 14. pont: közvetlenül a kezelési tételek alatt) -->
+      <details class="grp" :class="{ flag: tx.toReview }" :open="open.mats" @toggle="open.mats = ($event.target as HTMLDetailsElement).open">
+        <summary><span class="gi" style="background:var(--teal)"><AppIcon name="box" :size="18" /></span><span class="gt">Felhasznált anyagok</span><span class="gs">{{ matSum }}</span><span v-if="tx.toReview" class="flagdot">{{ tx.toReview }}</span><span class="chev">▾</span></summary>
+        <div class="gb">
+          <div class="scroll-x">
+            <table class="t ss">
+              <thead><tr><th style="width:30px" /><th>Anyag</th><th class="hide-m">Csomag szerint</th><th class="hide-m">Diktálás alapján</th><th>Mennyiség</th><th>Jelzés</th></tr></thead>
+              <tbody>
+                <tr v-for="r in tx.rows" :key="r.id" :class="[`st-${r.st}`, { off: !r.checked }]">
+                  <td><input type="checkbox" :checked="r.checked" @change="tx.setChecked(r.id, ($event.target as HTMLInputElement).checked)"></td>
+                  <td><b>{{ db.items.find(i => i.id === r.id)?.name }}</b><div class="small muted">{{ db.items.find(i => i.id === r.id)?.group }}</div>
+                    <div v-for="l in (r.checked ? tx.lotPreview(r.id, r.qty) : [])" :key="l.lot" class="small" :style="l.expiry && l.expiry < today() ? 'color:var(--red);font-weight:700' : 'color:var(--blue-d)'">LOT {{ l.lot }} · lejár: {{ l.expiry ? fmtDate(l.expiry) : '–' }}{{ l.expiry && l.expiry < today() ? ' – LEJÁRT!' : '' }}{{ tx.lotPreview(r.id, r.qty).length > 1 ? ` (${l.qty})` : '' }}</div></td>
+                  <td class="hide-m">{{ r.pk ? `${r.pk} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}</td>
+                  <td class="hide-m">{{ r.dq !== undefined ? `${r.dq} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}<div v-if="r.dRel" class="small muted">csomag + {{ r.dRel }}</div></td>
+                  <td class="nowrap"><input class="q" type="number" min="0" step="1" :value="r.qty" @change="tx.setQty(r.id, Number(($event.target as HTMLInputElement).value))"> {{ db.items.find(i => i.id === r.id)?.unit }}
+                    <button v-if="r.manual" class="reset" :title="`Vissza a javasolt értékre (${r.auto})`" @click="tx.resetQty(r.id)">↺</button>
+                    <button v-if="tx.aiSoft[r.id] !== undefined" class="ai-soft" type="button" :title="`AI szerint: ${tx.aiSoft[r.id]} ${db.items.find(i => i.id === r.id)?.unit} – koppints az átvételhez`" data-test="ai-halvany" @click="tx.takeAiSoft(r.id)">AI: {{ tx.aiSoft[r.id] }}</button></td>
+                  <td>
+                    <span v-if="r.st === 'ok'" class="badge b-green">✓ egyezik</span>
+                    <template v-else-if="r.st === 'diff' || r.st === 'dict'">
+                      <span v-if="s.confirmedRows.includes(r.id) || s.recordId" class="badge b-green">✓ megerősítve</span>
+                      <template v-else>
+                        <span class="badge b-yellow" :title="r.st === 'diff' ? `csomag: ${r.pk}` : 'Csak a diktálásban hangzott el'">⚠ ellenőrizendő</span>
+                        <button class="btn sm" style="margin-left:4px" @click="tx.confirmRow(r.id)">Megerősítem</button>
+                      </template>
+                    </template>
+                    <span v-else-if="r.st === 'pkg'" class="badge b-gray">csomag</span>
+                    <span v-else-if="r.st === 'macro'" class="badge b-gray">rövidítésből: {{ r.macro }}</span>
+                    <span v-else class="badge b-blue">kézzel hozzáadva</span>
+                  </td>
+                </tr>
+                <tr v-if="!tx.rows.length"><td colspan="6" class="muted">Válassz kezelést vagy kezdj diktálni – a javaslat itt jelenik meg.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <select class="inp auto" @change="($event.target as HTMLSelectElement).value && tx.addMaterial(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''">
+              <option value="">+ Anyag hozzáadása a raktárlistából…</option>
+              <optgroup v-for="g in groups" :key="g" :label="g"><option v-for="i in db.items.filter(x => x.group === g && !present.has(x.id))" :key="i.id" :value="i.id">{{ i.name }} ({{ i.unit }})</option></optgroup>
+            </select>
+            <span class="small muted">Sárga = ellenőrizendő eltérés · halvány = csak a csomagból javasolt. Jóváhagyáskor a tételek levonódnak a raktárból.</span>
+          </div>
         </div>
       </details>
 
@@ -337,49 +403,6 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
             <select v-model="sugTooth" class="inp auto"><option value="">fog…</option><option v-for="n in teethList" :key="n" :value="n">{{ n }}</option></select>
             <select v-model="sugType" class="inp auto"><option value="">javasolt művelet…</option><option v-for="t in db.types" :key="t.id" :value="t.id">{{ t.name }}</option></select>
             <button class="btn sm" @click="addSug">+ Javaslat felvétele</button>
-          </div>
-        </div>
-      </details>
-
-      <!-- felhasznált anyagok -->
-      <details class="grp" :class="{ flag: tx.toReview }" :open="open.mats" @toggle="open.mats = ($event.target as HTMLDetailsElement).open">
-        <summary><span class="gi" style="background:var(--teal)"><AppIcon name="box" :size="18" /></span><span class="gt">Felhasznált anyagok</span><span class="gs">{{ matSum }}</span><span v-if="tx.toReview" class="flagdot">{{ tx.toReview }}</span><span class="chev">▾</span></summary>
-        <div class="gb">
-          <div class="scroll-x">
-            <table class="t ss">
-              <thead><tr><th style="width:30px" /><th>Anyag</th><th class="hide-m">Csomag szerint</th><th class="hide-m">Diktálás alapján</th><th>Mennyiség</th><th>Jelzés</th></tr></thead>
-              <tbody>
-                <tr v-for="r in tx.rows" :key="r.id" :class="[`st-${r.st}`, { off: !r.checked }]">
-                  <td><input type="checkbox" :checked="r.checked" @change="tx.setChecked(r.id, ($event.target as HTMLInputElement).checked)"></td>
-                  <td><b>{{ db.items.find(i => i.id === r.id)?.name }}</b><div class="small muted">{{ db.items.find(i => i.id === r.id)?.group }}</div>
-                    <div v-for="l in (r.checked ? tx.lotPreview(r.id, r.qty) : [])" :key="l.lot" class="small" :style="l.expiry && l.expiry < today() ? 'color:var(--red);font-weight:700' : 'color:var(--blue-d)'">LOT {{ l.lot }} · lejár: {{ l.expiry ? fmtDate(l.expiry) : '–' }}{{ l.expiry && l.expiry < today() ? ' – LEJÁRT!' : '' }}{{ tx.lotPreview(r.id, r.qty).length > 1 ? ` (${l.qty})` : '' }}</div></td>
-                  <td class="hide-m">{{ r.pk ? `${r.pk} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}</td>
-                  <td class="hide-m">{{ r.dq !== undefined ? `${r.dq} ${db.items.find(i => i.id === r.id)?.unit}` : '–' }}<div v-if="r.dRel" class="small muted">csomag + {{ r.dRel }}</div></td>
-                  <td class="nowrap"><input class="q" type="number" min="0" step="1" :value="r.qty" @change="tx.setQty(r.id, Number(($event.target as HTMLInputElement).value))"> {{ db.items.find(i => i.id === r.id)?.unit }}
-                    <button v-if="r.manual" class="reset" :title="`Vissza a javasolt értékre (${r.auto})`" @click="tx.resetQty(r.id)">↺</button></td>
-                  <td>
-                    <span v-if="r.st === 'ok'" class="badge b-green">✓ egyezik</span>
-                    <template v-else-if="r.st === 'diff' || r.st === 'dict'">
-                      <span v-if="s.confirmedRows.includes(r.id) || s.recordId" class="badge b-green">✓ megerősítve</span>
-                      <template v-else>
-                        <span class="badge b-yellow" :title="r.st === 'diff' ? `csomag: ${r.pk}` : 'Csak a diktálásban hangzott el'">⚠ ellenőrizendő</span>
-                        <button class="btn sm" style="margin-left:4px" @click="tx.confirmRow(r.id)">Megerősítem</button>
-                      </template>
-                    </template>
-                    <span v-else-if="r.st === 'pkg'" class="badge b-gray">csomag</span>
-                    <span v-else class="badge b-blue">kézzel hozzáadva</span>
-                  </td>
-                </tr>
-                <tr v-if="!tx.rows.length"><td colspan="6" class="muted">Válassz kezelést vagy kezdj diktálni – a javaslat itt jelenik meg.</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="row" style="margin-top:8px">
-            <select class="inp auto" @change="($event.target as HTMLSelectElement).value && tx.addMaterial(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''">
-              <option value="">+ Anyag hozzáadása a raktárlistából…</option>
-              <optgroup v-for="g in groups" :key="g" :label="g"><option v-for="i in db.items.filter(x => x.group === g && !present.has(x.id))" :key="i.id" :value="i.id">{{ i.name }} ({{ i.unit }})</option></optgroup>
-            </select>
-            <span class="small muted">Sárga = ellenőrizendő eltérés · halvány = csak a csomagból javasolt. Jóváhagyáskor a tételek levonódnak a raktárból.</span>
           </div>
         </div>
       </details>

@@ -2,16 +2,43 @@
 // mikrofon (zajcsökkentés, visszhangszűrés, automatikus hangerő kérése) → mintavétel 16 kHz mono → mélyzaj-szűrés (kb. 90 Hz alatt) → hangerő-egységesítés → WAV.
 export interface AudioStats { seconds: number; peak: number; rms: number; speechRatio: number }
 
-/** a nyers felvétel átalakítása: 16 kHz mono, felüláteresztő szűrő (alapból 90 Hz), csúcsra normalizálás; tiszta függvény (tesztelhető) */
-export function prepareAudio(samples: Float32Array, rate: number, o: { highpassHz?: number; normalize?: boolean } = {}): { pcm: Float32Array; stats: AudioStats } {
-  const OUT = 16000
-  let x: Float32Array
-  if (rate === OUT) x = Float32Array.from(samples)
-  else {
-    const n = Math.floor(samples.length * OUT / rate); x = new Float32Array(n)
-    const r = rate / OUT
-    for (let i = 0; i < n; i++) { const p = i * r, a = Math.floor(p), f = p - a; x[i] = (samples[a] ?? 0) * (1 - f) + (samples[a + 1] ?? samples[a] ?? 0) * f }
+export type ResampleMode = 'uj' | 'regi'
+/** a régi (v2.3) átalakítás: lineáris interpoláció előzetes aluláteresztő szűrés nélkül – a B-009 egyik kódgyanúja (aliasing), a laborban összevethető */
+export function resampleLinear(samples: Float32Array, rate: number, out = 16000): Float32Array {
+  if (rate === out) return Float32Array.from(samples)
+  const n = Math.floor(samples.length * out / rate), x = new Float32Array(n), r = rate / out
+  for (let i = 0; i < n; i++) { const p = i * r, a = Math.floor(p), f = p - a; x[i] = (samples[a] ?? 0) * (1 - f) + (samples[a + 1] ?? samples[a] ?? 0) * f }
+  return x
+}
+/** v2.4 12. pont C1: szabványos, sávkorlátozott átalakítás (ablakozott sinc-interpoláció, Blackman-ablak, levágás a kimeneti Nyquist-frekvencia ~90%-án),
+ * így a 8 kHz fölötti összetevők (sz, s, cs, z sziszegő hangok felharmonikusai) nem tükröződnek vissza a hallható sávba. Tiszta függvény (tesztelhető). */
+export function resampleFiltered(samples: Float32Array, rate: number, out = 16000, halfTaps = 16): Float32Array {
+  if (rate === out) return Float32Array.from(samples)
+  const n = Math.floor(samples.length * out / rate), x = new Float32Array(n), r = rate / out
+  // levágási frekvencia a bemeneti mintavételhez viszonyítva (lefelé mintavételezésnél a kimeneti Nyquist 90%-a)
+  const fc = 0.5 * Math.min(1, out / rate) * 0.9
+  const half = Math.ceil(halfTaps * Math.max(1, r))
+  for (let i = 0; i < n; i++) {
+    const p = i * r, c = Math.floor(p)
+    let acc = 0, wsum = 0
+    for (let k = c - half + 1; k <= c + half; k++) {
+      if (k < 0 || k >= samples.length) continue
+      const t = p - k
+      const sinc = t === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * t) / (Math.PI * t)
+      const u = (t + half) / (2 * half)
+      const w = u <= 0 || u >= 1 ? 0 : 0.42 - 0.5 * Math.cos(2 * Math.PI * u) + 0.08 * Math.cos(4 * Math.PI * u)
+      const h = sinc * w
+      acc += samples[k]! * h; wsum += h
+    }
+    x[i] = wsum ? acc / wsum : 0
   }
+  return x
+}
+/** a nyers felvétel átalakítása: 16 kHz mono, felüláteresztő szűrő (alapból 90 Hz), csúcsra normalizálás; tiszta függvény (tesztelhető).
+ * v2.4: az átalakítás alapból szűrt („uj”); a régi lineáris a Diktálás-laborban választható („regi”). A hangerő-egységesítés a zajszűréstől függetlenül kapcsolható. */
+export function prepareAudio(samples: Float32Array, rate: number, o: { highpassHz?: number; normalize?: boolean; resample?: ResampleMode } = {}): { pcm: Float32Array; stats: AudioStats } {
+  const OUT = 16000
+  const x: Float32Array = o.resample === 'regi' ? resampleLinear(samples, rate, OUT) : resampleFiltered(samples, rate, OUT)
   const hp = o.highpassHz ?? 90
   if (hp > 0) { // 2. rendű Butterworth felüláteresztő (biquad)
     const w0 = 2 * Math.PI * hp / OUT, c = Math.cos(w0), al = Math.sin(w0) / (2 * Math.SQRT1_2)

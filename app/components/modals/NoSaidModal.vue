@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// „Nem ezt mondtam” (spec v2.3, 5. pont, 10. alpont): a felismert szöveg előre beírva, csak a rossz szavakat kell javítani; a jelzés a javítási naplóba kerül (csak szöveg, hangfelvétel nincs)
+// „Nem ezt mondtam” (spec v2.3, 5. pont, 10. alpont; v2.4 6. pont: a javításból automatikusan tanult szabály, v2.4 13. pont: a gomb a „Diktálás és jegyzet” fejlécében): a felismert szöveg előre beírva, csak a rossz szavakat kell javítani; a jelzés a javítási naplóba kerül (csak szöveg, hangfelvétel nincs)
 import { useDictStore } from '~/stores/dict'
 import { useTreatmentStore } from '~/stores/treatment'
 import { useUiStore } from '~/stores/ui'
@@ -26,10 +26,15 @@ function save() {
   const ps = textFixed ? pairs(orig, fixed.value) : []
   if (ps.length) ps.forEach(([a, b]) => dict.addLog({ source: 'jelzes', kind, pattern: 'txt:' + norm(a), outcome: norm(b), raw: orig, interpreted: tx.pipe.text, final: fixed.value, live: x.dict.live || undefined, recognizer: x.dict.recognizer, wrong: wrong.value || undefined, note: note.value || undefined }))
   else dict.addLog({ source: 'jelzes', kind, raw: orig, interpreted: tx.pipe.text, final: fixed.value, live: x.dict.live || undefined, recognizer: x.dict.recognizer, wrong: wrong.value || undefined, note: note.value || undefined })
-  ui.toast('Köszönjük – a jelzést rögzítettük.', textFixed ? { label: 'Feldolgozás újra', fn: () => { tx.setText(fixed.value, 0) } } : undefined)
+  // v2.4 6. pont: a javítás maga a jóváhagyás – a kijavított szavakból azonnal tanult szabály lesz (a következő diktálástól lefut)
+  const learned = textFixed && wrong.value !== 'rosszul-ertelmezte' ? tx.learnFromCorrection(orig, fixed.value) : { n: 0, conflicts: [] as string[] }
+  const extra = learned.n ? ` ${learned.n} javítást megtanultam – legközelebb magától javítom.` : ''
+  const conf = learned.conflicts.length ? ` Ütköző javítás (a legutóbbi érvényes): ${learned.conflicts.join('; ')}.` : ''
+  ui.toast('Köszönjük – a jelzést rögzítettük.' + extra + conf, textFixed && !reprocessed ? { label: 'Feldolgozás újra', fn: () => { tx.setText(fixed.value, 0) } } : undefined)
   ui.close()
 }
-function reprocess() { tx.setText(fixed.value, 0); save() }
+let reprocessed = false
+function reprocess() { reprocessed = true; save(); tx.setText(fixed.value, 0) }
 </script>
 
 <template>

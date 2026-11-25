@@ -21,9 +21,14 @@ import { buildPrompt } from '~/utils/dict/prompt'
 import { DEFAULT_HALLU as DEFAULT_HALLU_LIST } from '~/utils/dict/filters'
 import { useDictStore } from './dict'
 import type { DictResult } from './voice'
+import { findMacros, comboSig, shouldRecommend, type MacroHit } from '~/utils/dict/macro'
+import { correctionPairs, guessCat, isRiskyCat, scopeOf } from '~/utils/dict/learn'
+import type { PromptStyle } from '~/utils/dict/prompt'
+import { planMarks, queueInfo } from '~/utils/v24'
+import { norm } from '~/utils/dates'
 
-export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual'
-export interface MatRow { id: string; pk: number; dq?: number; dRel?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean }
+export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual' | 'macro'
+export interface MatRow { id: string; pk: number; dq?: number; dRel?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean; /** v2.4 15. pont: a sor (részben) rövidítésből jön */ macro?: string }
 
 interface Session {
   key: string
@@ -69,7 +74,15 @@ interface Session {
   picks: Record<string, string>
   resolved: Record<string, string>
   toothSub: Record<number, number>
-  dict: { recognizer: string; live: string; seconds: number; differs: boolean; fallback: boolean; noSpeech: boolean; noted: string[] }
+  dict: { recognizer: string; live: string; seconds: number; differs: boolean; fallback: boolean; noSpeech: boolean; noted: string[]; whisper?: string; browserFinal?: string }
+  /** v2.4 8. pont: a tervezett, de szándékosan el nem végzett tételek („Nem történt meg”) – kulcs → megjegyzés */
+  notDone: Record<string, string>
+  /** v2.4 15. pont: a rövidítéshez választott fog, a kétértelmű elhagyás döntése, a visszaállított (elhagyott) sorok */
+  macroTooth: Record<string, number>
+  macroOmit: Record<string, number>
+  macroRestore: string[]
+  /** v2.4 6. pont: az ebben a kezelésben visszavont tanult szabályok */
+  undoRules: string[]
   ai: { state: 'idle' | 'run' | 'done' | 'err'; model: string; items: { tooth: number | null; typeId: string; status: string }[]; materials: { item: string; qty: number }[]; error: string }
 }
 
@@ -99,7 +112,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const dentition = computed(() => patient.value?.dentition || 'permanent')
 
   function base(o: Partial<Session> & { patientId: string; doctorId: string; date: string; time: string }): Session {
-    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], confirmedRows: [], picks: {}, resolved: {}, toothSub: {}, dict: { recognizer: 'kézi', live: '', seconds: 0, differs: false, fallback: false, noSpeech: false, noted: [] }, ai: { state: 'idle', model: '', items: [], materials: [], error: '' }, ...o }
+    return { key: 'k' + uid(), recordId: null, appointmentId: null, text: '', teeth: [], types: [], rmTeeth: [], rmTypes: [], manualSurf: {}, rmSurf: {}, overrides: {}, unchecked: [], extra: [], planned: null, focusTooth: null, mode: 'treat', sterBatch: usableBatches(db.value)[0]?.batch || null, statusText: '', statusEdits: {}, assign: {}, rmPairs: [], itemState: {}, planItems: [], hasPlan: false, sugExtra: [], rmSug: [], sugMeta: {}, statusOff: [], statusManual: {}, confirmedConf: [], confirmedRows: [], picks: {}, resolved: {}, toothSub: {}, dict: { recognizer: 'kézi', live: '', seconds: 0, differs: false, fallback: false, noSpeech: false, noted: [] }, ai: { state: 'idle', model: '', items: [], materials: [], error: '' }, notDone: {}, macroTooth: {}, macroOmit: {}, macroRestore: [], undoRules: [], ...o }
   }
   const nowSlot = () => fromMin(Math.min(Math.max(Math.floor(nowMin() / 30) * 30, db.value.settings.startHour * 60), db.value.settings.endHour * 60 - 30))
 
@@ -113,15 +126,13 @@ export const useTreatmentStore = defineStore('treatment', () => {
     })
     return out
   }
-  /** kezelés indítása az időpontból: a páciens, az előjegyzett tételek és a tervezett fog/felszín átkerül */
+  /** kezelés indítása az időpontból: a páciens és az előjegyzett tételek (a „Mai feladat” összefoglalóhoz és az ellenőrzéshez) átkerülnek.
+   * v2.4 8. pont 5.: a tervezett kezelések NEM töltődnek be automatikusan az eredménybe – az eredmény mindig a ténylegesen diktált (vagy kézzel rögzített) tartalom. */
   function startFromAppointment(apptId: string) {
     const a = db.value.appointments.find(x => x.id === apptId); if (!a) return
     const planned = a.planned ? JSON.parse(JSON.stringify(a.planned)) as Planned : null
     const planItems = plannedItemsOf(a)
-    const assign: Record<string, string[]> = {}, surf: SurfaceMap = {}
-    planItems.forEach(i => { if (i.tooth) { (assign[i.tooth] = assign[i.tooth] || []).push(i.typeId); surf[i.tooth] = [...new Set([...(surf[i.tooth] || []), ...i.surfaces])] } })
-    const teeth = [...new Set(planItems.map(i => i.tooth).filter((n): n is number => !!n))]
-    s.value = base({ patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: today(), time: a.date === today() ? a.start : nowSlot(), types: [...a.typeIds], planned, teeth, assign, planItems, hasPlan: true, manualSurf: planned ? { ...JSON.parse(JSON.stringify(planned.surfaces)), ...surf } : surf })
+    s.value = base({ patientId: a.patientId, appointmentId: a.id, doctorId: a.doctorId, date: today(), time: a.date === today() ? a.start : nowSlot(), types: [], planned, teeth: [], assign: {}, planItems, hasPlan: true, manualSurf: {} })
     parsed.value = EMPTY_PARSE; itemParse.value = EMPTY_ITEMS; dictStatus.value = {}
     restoreDraft()
   }
@@ -172,7 +183,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
   /** a diktálás végén azonnali feldolgozás: az előnézet azonnal elkészül, nem vár a késleltetésre; a felismerő adatai a naplóhoz és a megjelenítéshez */
   function finishDictation(info?: DictResult) {
     const x = s.value
-    if (x && info) x.dict = { ...x.dict, recognizer: info.recognizer === 'whisper' ? 'Whisper' : info.recognizer === 'browser' ? 'böngésző' : 'nincs', live: info.live || '', seconds: info.seconds, differs: info.differs, fallback: info.fallback, noSpeech: info.noSpeech }
+    if (x && info) x.dict = { ...x.dict, recognizer: info.recognizer === 'whisper' ? 'Whisper' : info.recognizer === 'browser' ? 'böngésző' : 'nincs', live: info.live || '', seconds: info.seconds, differs: info.differs, fallback: info.fallback, noSpeech: info.noSpeech, whisper: info.whisper, browserFinal: info.browserFinal }
     if (timer) clearTimeout(timer); applyParse(); saveDraft()
     if (x) {
       const key = x.text.trim()
@@ -184,15 +195,60 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const dictStore = () => { const d = useDictStore(); d.init(); return d }
   const vocab = computed(() => buildVocab({ items: db.value.items, types: db.value.types, statusDict: db.value.settings.statusDict }))
   const pipe = ref<PipeResult>({ raw: '', text: '', cleaned: '', steps: [], flags: [], filteredOut: [], unknown: [] })
+  /* ---------- v2.4 15. pont: rövidítések ---------- */
+  const macroHits = ref<MacroHit[]>([])
+  const lineKey = (h: MacroHit, i: number) => `${h.key}#${i}`
+  /** a sor ténylegesen elhagyott-e (a „nélkül” szerint, a kétértelmű elhagyás döntése, illetve a visszaállítás után) */
+  function lineOmitted(h: MacroHit, i: number): boolean {
+    const x = s.value; if (!x) return false
+    if (x.macroRestore.includes(lineKey(h, i))) return false
+    if (h.ambiguousOmit && x.macroOmit[h.key] !== undefined) return x.macroOmit[h.key] === i || h.lines[i]!.omitted
+    return h.lines[i]!.omitted
+  }
+  /** a rövidítésekből adódó tételek (fog × művelet): a fogszámos tétel a kimondott fogra, ennek hiányában a választott fogra */
+  function macroPairs(): { tooth: number | null; typeId: string; macro: string }[] {
+    const x = s.value; if (!x) return []
+    const out: { tooth: number | null; typeId: string; macro: string }[] = []
+    macroHits.value.forEach(h => h.lines.forEach((l, i) => {
+      if (l.kind !== 'type' || l.missing || lineOmitted(h, i)) return
+      if (isBound(l.id)) { const teeth = h.teeth.length ? h.teeth : x.macroTooth[h.key] ? [x.macroTooth[h.key]!] : []; teeth.forEach(n => out.push({ tooth: n, typeId: l.id, macro: h.name })) }
+      else out.push({ tooth: null, typeId: l.id, macro: h.name })
+    }))
+    return out
+  }
+  /** a rövidítés anyagai: alapmennyiség (a diktált szám felülírja, a „plusz N” hozzáadódik) */
+  const macroMats = computed<Record<string, { qty: number; macro: string }>>(() => {
+    const out: Record<string, { qty: number; macro: string }> = {}
+    macroHits.value.forEach(h => h.lines.forEach((l, i) => { if (l.kind === 'mat' && !l.missing && !lineOmitted(h, i)) out[l.id] = { qty: (out[l.id]?.qty || 0) + (l.qty || 1), macro: h.name } }))
+    return out
+  })
+  const macroOf = (tooth: number | null, typeId: string) => macroPairs().find(p => p.typeId === typeId && (p.tooth === tooth || p.tooth === null))?.macro
+  function setMacroTooth(key: string, n: number) { const x = s.value; if (!x) return; x.macroTooth[key] = n; applyParse() }
+  function setMacroOmit(key: string, idx: number) { const x = s.value; if (!x) return; x.macroOmit[key] = idx; applyParse() }
+  function restoreMacroLine(h: MacroHit, i: number) { const x = s.value; if (!x) return; if (!x.macroRestore.includes(lineKey(h, i))) x.macroRestore.push(lineKey(h, i)); applyParse() }
+  /* ---------- v2.4 6. pont: a tanult szabály első alkalmazása (fogszám / művelet / anyag) jelölést kap és visszavonható ---------- */
+  const learnedApplied = computed(() => {
+    const d = dictStore(), seen = new Set<string>()
+    return pipe.value.steps.filter(st => st.kind === 'personal').map(st => d.s.personal.find(p => p.from === st.from && p.to === st.to)).filter((p): p is NonNullable<typeof p> => !!p && !seen.has(p.id) && (seen.add(p.id), true))
+      .map(p => ({ rule: p, first: (p.uses || 0) === 0, risky: isRiskyCat(p.cat) }))
+  })
+  function undoLearned(ruleId: string) { const x = s.value; if (!x) return; if (!x.undoRules.includes(ruleId)) x.undoRules.push(ruleId); applyParse() }
   function applyParse() {
     if (!s.value) return
     const x = s.value
     const d = dictStore()
     // kitaláció-szűrő: a bővítések a kódtáblák között szerkeszthetők
-    pipe.value = preprocess(x.text, { personal: d.s.personal, filterList: d.s.extraFilter.length ? [...DEFAULT_HALLU_LIST, ...d.s.extraFilter] : undefined, vocab: vocab.value, threshold: d.s.prefs.threshold, picks: x.picks, seconds: x.dict.seconds || undefined })
-    const ptext = pipe.value.text
+    pipe.value = preprocess(x.text, { personal: d.s.personal.filter(p => !x.undoRules.includes(p.id)), filterList: d.s.extraFilter.length ? [...DEFAULT_HALLU_LIST, ...d.s.extraFilter] : undefined, vocab: vocab.value, threshold: d.s.prefs.threshold, picks: x.picks, seconds: x.dict.seconds || undefined })
+    // v2.4 15. pont: a rövidítések felismerése az értelmezés előtt; a név és az elhagyó kifejezés a parsernek átadott szövegből kimarad
+    const mres = findMacros(pipe.value.text, d.s.macros, { types: db.value.types, items: db.value.items })
+    macroHits.value = mres.hits
+    const ptext = mres.text
     parsed.value = analyze(ptext, db.value, { dentition: dentition.value })
     itemParse.value = analyzeItems(ptext, db.value)
+    // a rövidítés tételei normál sorként jelennek meg („rövidítésből: …” jelöléssel)
+    macroPairs().forEach(p => { if (!itemParse.value.done.some(q => q.tooth === p.tooth && q.typeId === p.typeId)) itemParse.value.done.push({ tooth: p.tooth, typeId: p.typeId }) })
+    macroPairs().forEach(p => { if (p.tooth && !parsed.value.teeth.includes(p.tooth)) parsed.value.teeth.push(p.tooth); if (!parsed.value.types.includes(p.typeId)) parsed.value.types.push(p.typeId) })
+    if (macroPairs().length) itemParse.value.doneTypes = [...new Set([...itemParse.value.doneTypes, ...macroPairs().map(p => p.typeId)])]
     const ip = itemParse.value
     // a csak javaslatként említett fog és művelet nem elvégzett kezelés (12. pont)
     if (ip.suggested.length) {
@@ -238,6 +294,8 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const orphanTarget = x.focusTooth ?? (x.teeth.length === 1 ? x.teeth[0] : null)
     x.teeth.forEach(n => {
       const set = new Set<Surface>([...(parsed.value.surfaces[n] || []), ...(x.manualSurf[n] || [])])
+      // v2.4 8. pont: a terv nem töltődik be az eredménybe, de a tervezett fogon diktált kezelés a tervezett felszíneket kapja, ha felszín nem hangzott el
+      if (!set.size && x.planned?.surfaces[n]?.length && !(x.rmSurf[n] || []).length) x.planned.surfaces[n]!.forEach(sf => set.add(sf))
       if (n === orphanTarget) parsed.value.orphanSurfaces.forEach(sf => set.add(sf))
       ;(x.rmSurf[n] || []).forEach(sf => set.delete(sf))
       out[n] = SURFACE_ORDER.filter(sf => set.has(sf))
@@ -348,21 +406,25 @@ export const useTreatmentStore = defineStore('treatment', () => {
   const rows = computed<MatRow[]>(() => {
     const x = s.value; if (!x) return []
     const pkg = pkgForItems(db.value, doneItems.value)
-    const ids = new Set([...Object.keys(pkg), ...Object.keys(parsed.value.qty), ...Object.keys(parsed.value.rel || {}), ...x.extra])
+    const mm = macroMats.value
+    const ids = new Set([...Object.keys(pkg), ...Object.keys(mm), ...Object.keys(parsed.value.qty), ...Object.keys(parsed.value.rel || {}), ...x.extra])
     const order = db.value.items.map(i => i.id)
     return [...ids].filter(id => db.value.items.some(i => i.id === id)).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(id => {
       // a diktált szám a teljes mennyiség; „még / plusz N” esetén a csomag + N
-      const pk = pkg[id] || 0, abs = parsed.value.qty[id], dRel = parsed.value.rel?.[id]
+      const mq = mm[id]?.qty || 0
+      const pk = (pkg[id] || 0) + mq, abs = parsed.value.qty[id], dRel = parsed.value.rel?.[id]
       const dq = abs !== undefined ? abs : dRel !== undefined ? pk + dRel : undefined
       let st: RowState
-      if (dq === undefined && pk > 0) st = 'pkg'
+      // v2.4 15. pont: a rövidítés sora nem ⚠ (a diktált szám az összes mennyiség, a „plusz N” hozzáadódik)
+      if (mq > 0) st = 'macro'
+      else if (dq === undefined && pk > 0) st = 'pkg'
       else if (dq !== undefined && pk === 0) st = 'dict'
       else if (dq !== undefined && dq === pk) st = 'ok'
       else if (dq !== undefined) st = 'diff'
       else st = 'manual'
       const auto = dq !== undefined ? dq : pk > 0 ? pk : 1
       const qty = x.overrides[id] !== undefined ? x.overrides[id]! : auto
-      return { id, pk, dq, dRel, st, auto, qty, manual: x.overrides[id] !== undefined && x.overrides[id] !== auto, checked: !x.unchecked.includes(id) }
+      return { id, pk, dq, dRel, st, auto, qty, manual: x.overrides[id] !== undefined && x.overrides[id] !== auto, checked: !x.unchecked.includes(id), macro: mm[id]?.macro }
     })
   })
   const rowsReview = computed(() => s.value?.recordId ? 0 : rows.value.filter(r => r.checked && (r.st === 'diff' || r.st === 'dict') && !s.value?.confirmedRows.includes(r.id)).length)
@@ -389,14 +451,48 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const aiSet = new Set(ai.map(i => k(i.tooth, i.typeId))), ruleSet = new Set(rule.map(i => k(i.tooth, i.typeId)))
     ai.forEach(i => { if (!ruleSet.has(k(i.tooth, i.typeId))) out.push({ key: 'ai:+' + k(i.tooth, i.typeId), kind: 'ai', title: `AI szerint: ${lab(i.tooth, i.typeId)}`, detail: 'A szabályalapú értelmezés ezt a tételt nem találta.', choices: [{ id: 'rule', label: 'Szabály szerint: nem szerepel' }, { id: 'ai', label: 'AI szerint: ' + lab(i.tooth, i.typeId) }], data: { tooth: i.tooth, typeId: i.typeId, add: true } }) })
     if (ai.length) rule.forEach(i => { if (!aiSet.has(k(i.tooth, i.typeId)) && i.origin !== 'planned') out.push({ key: 'ai:-' + k(i.tooth, i.typeId), kind: 'ai', title: `Szabály szerint: ${lab(i.tooth, i.typeId)}`, detail: 'Az AI ezt a tételt nem találta.', choices: [{ id: 'rule', label: 'Szabály szerint: ' + lab(i.tooth, i.typeId) }, { id: 'ai', label: 'AI szerint: nem szerepel' }], data: { key: i.key, add: false } }) })
-    x.ai.materials.forEach(m => { const r = rows.value.find(v => v.id === m.item); const it = db.value.items.find(v => v.id === m.item); if (r && it && r.checked && Math.abs(r.qty - m.qty) > 1e-9 && x.overrides[m.item] === undefined) out.push({ key: 'ai:q:' + m.item, kind: 'ai', title: `${it.name.split(' ')[0]}: eltérő mennyiség`, choices: [{ id: 'rule', label: `Szabály szerint: ${r.qty} ${it.unit}` }, { id: 'ai', label: `AI szerint: ${m.qty} ${it.unit}` }], data: { item: m.item, qty: m.qty } }) })
+    // v2.4 2. pont: anyagnál csak a jelentős eltérés kockázatos (a két érték aránya legalább 2-szeres, vagy az AI olyan anyagot ad, ami a szabály szerint nincs); a kisebb eltérés halvány jelzés
+    x.ai.materials.forEach(m => {
+      const r = rows.value.find(v => v.id === m.item); const it = db.value.items.find(v => v.id === m.item); if (!it || x.overrides[m.item] !== undefined) return
+      if (!r || !r.checked) { out.push({ key: 'ai:m:' + m.item, kind: 'ai', title: `AI szerint: ${it.name} ${m.qty} ${it.unit}`, detail: 'A szabályalapú értelmezés ezt az anyagot nem találta.', choices: [{ id: 'rule', label: 'Szabály szerint: nem szerepel' }, { id: 'ai', label: `AI szerint: ${m.qty} ${it.unit}` }], data: { item: m.item, qty: m.qty, add: true } }); return }
+      if (Math.abs(r.qty - m.qty) > 1e-9 && significantQty(r.qty, m.qty)) out.push({ key: 'ai:q:' + m.item, kind: 'ai', title: `${it.name.split(' ')[0]}: jelentősen eltérő mennyiség`, choices: [{ id: 'rule', label: `Szabály szerint: ${r.qty} ${it.unit}` }, { id: 'ai', label: `AI szerint: ${m.qty} ${it.unit}` }], data: { item: m.item, qty: m.qty } })
+    })
     return out
   })
+  /** v2.4 2. pont: „jelentős” mennyiségi eltérés – a két érték aránya legalább 2-szeres (később felülvizsgálandó) */
+  const significantQty = (a: number, b: number) => { const lo = Math.min(a, b), hi = Math.max(a, b); return lo <= 0 ? hi > 0 : hi / lo >= 2 }
+  /** v2.4 2. pont: a nem kockázatos AI-eltérés halvány jelzés a soron („AI szerint: 1 db”), egy koppintással átvehető; nem blokkol */
+  const aiSoft = computed<Record<string, number>>(() => {
+    const x = s.value; const out: Record<string, number> = {}
+    if (!x || x.ai.state !== 'done' || x.recordId) return out
+    x.ai.materials.forEach(m => { const r = rows.value.find(v => v.id === m.item); if (r && r.checked && x.overrides[m.item] === undefined && Math.abs(r.qty - m.qty) > 1e-9 && !significantQty(r.qty, m.qty)) out[m.item] = m.qty })
+    return out
+  })
+  function takeAiSoft(item: string) {
+    const x = s.value; const q = aiSoft.value[item]; if (!x || q === undefined) return
+    const before = rows.value.find(r => r.id === item)?.qty
+    x.overrides[item] = q; confirmRow(item)
+    const d = dictStore(); d.s.aiStats.diffs++; d.s.aiStats.aiRight++
+    d.addLog({ source: 'auto', kind: 'ai-halvany', raw: x.dict.live || x.text, interpreted: pipe.value.text, final: `${item}: ${before} → ${q} (AI halvány jelzés átvéve)`, recognizer: x.dict.recognizer, ai: { on: true, agree: false, picked: 'ai' } })
+  }
   const flags = computed<DictFlag[]>(() => {
     const seen = new Set<string>()
     return [...pipe.value.flags, ...reviewC.value, ...aiFlags.value].filter(f => (seen.has(f.key) ? false : (seen.add(f.key), true)))
   })
-  const pendingFlags = computed(() => flags.value.filter(f => !s.value?.resolved[f.key]))
+  /** v2.4 2. pont 3.: a már kézzel javított érték nem kérdez újra (a felhasználó döntött) */
+  const manuallyFixed = (f: DictFlag) => { const it = f.data?.item as string | undefined; return !!it && ['qty', 'life', 'ai'].includes(f.kind) && s.value?.overrides[it] !== undefined }
+  const pendingFlags = computed(() => flags.value.filter(f => !s.value?.resolved[f.key] && !manuallyFixed(f)).concat(macroQuestions.value))
+  /** v2.4 15. pont 5.: hiányzó fogszám a rövidítésnél – egyetlen kérdés a fogszám-választóval; kétértelmű elhagyás – rákérdezés */
+  const macroQuestions = computed<DictFlag[]>(() => {
+    const x = s.value; if (!x || x.recordId) return []
+    const out: DictFlag[] = []
+    macroHits.value.forEach(h => {
+      if (h.needsTooth && !x.macroTooth[h.key]) out.push({ key: h.key + ':tooth', kind: 'macro', title: `„${h.name}” – melyik fog?`, detail: 'A rövidítés fogszámos tételt tartalmaz, de fogszám nem hangzott el.', choices: [], data: { hit: h.key, ask: 'tooth' } })
+      if (h.ambiguousOmit && x.macroOmit[h.key] === undefined) out.push({ key: h.key + ':omit', kind: 'macro', title: `„${h.ambiguousOmit.phrase} nélkül” – melyik tétel maradjon ki?`, choices: h.ambiguousOmit.candidates.map(i => ({ id: String(i), label: lineName(h.lines[i]!) })), data: { hit: h.key, ask: 'omit' } })
+    })
+    return out
+  })
+  const lineName = (l: { kind: string; id: string }) => (l.kind === 'type' ? db.value.types.find(t => t.id === l.id)?.name : db.value.items.find(i => i.id === l.id)?.name) || l.id
   function flagLog(f: DictFlag, choice: string, auto = false) {
     const x = s.value; if (!x) return
     const d = dictStore(), c = f.choices.find(v => v.id === choice)
@@ -411,7 +507,15 @@ export const useTreatmentStore = defineStore('treatment', () => {
   function resolveFlag(f: DictFlag, choice: string, auto = false) {
     const x = s.value; if (!x) return
     switch (f.kind) {
-      case 'similar': case 'ambig': x.picks[f.key] = choice; x.resolved[f.key] = choice; applyParse(); break
+      case 'similar': case 'ambig': {
+        x.picks[f.key] = choice; x.resolved[f.key] = choice
+        // v2.4 6. pont: a javítás maga a jóváhagyás – a választásból tanult szabály lesz (szakszó: a rendelő minden felhasználójára)
+        if (f.kind === 'similar' && choice !== '__none' && f.data?.word) {
+          const to = String(choice), cat = guessCat(to, { typeWords: db.value.types.map(t => norm(t.name).split(' ')[0]!), itemWords: db.value.items.map(i => norm(i.name).split(' ')[0]!) })
+          dictStore().learn(String(f.data.word), to, { scope: 'rendelo', cat, source: 'javitas' })
+        }
+        applyParse(); break
+      }
       case 'prebooked': {
         x.resolved[f.key] = choice
         if (choice !== 'none') {
@@ -428,7 +532,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
       case 'ai': {
         x.resolved[f.key] = choice
         if (choice === 'ai') {
-          if (f.data?.item) { x.overrides[f.data.item as string] = Number(f.data.qty); confirmRow(f.data.item as string) }
+          if (f.data?.item) { if (f.data.add) addMaterial(f.data.item as string); x.overrides[f.data.item as string] = Number(f.data.qty); confirmRow(f.data.item as string) }
           else if (f.data?.add) addItem((f.data.tooth as number | null), f.data.typeId as string)
           else if (f.data?.key) removeItem(f.data.key as string)
         }
@@ -465,7 +569,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     dictStore().addLog({ source: 'auto', kind, raw: x.dict.live || x.text, interpreted, final, live: x.dict.live || undefined, recognizer: x.dict.recognizer })
   }
   /** a Whisper szakszó-listája: előjegyzett tételek → kezelések és anyagok → szótár → tanult kifejezések */
-  const promptText = () => buildPrompt({ plannedTypes: [...new Set([...(s.value?.planItems.map(p => p.typeId) || []), ...(s.value?.types || [])])], types: db.value.types, items: db.value.items, learned: dictStore().s.personal.filter(p => p.active).map(p => p.to) })
+  const promptText = (style?: PromptStyle) => buildPrompt({ plannedTypes: [...new Set([...(s.value?.planItems.map(p => p.typeId) || []), ...(s.value?.types || [])])], types: db.value.types, items: db.value.items, learned: dictStore().s.personal.filter(p => p.active).map(p => p.to), macros: dictStore().s.macros.filter(m => m.active).map(m => m.name), style: style || dictStore().eff.promptStyle })
   /** AI-értelmezés (17. pont, csak a demóban kapcsolóval): a szabályalapú mellett fut, az eltérés ⚠ */
   async function runAi() {
     const x = s.value, d = dictStore(); if (!x || !d.s.prefs.ai || !x.text.trim() || x.recordId || typeof navigator === 'undefined' || !navigator.onLine) return
@@ -477,7 +581,8 @@ export const useTreatmentStore = defineStore('treatment', () => {
         body: JSON.stringify({ text: pipe.value.cleaned, types: db.value.types.map(t => ({ id: t.id, name: t.name })), items: db.value.items.map(i => ({ id: i.id, name: i.name, unit: i.unit })), planned: x.planItems.map(p => ({ tooth: p.tooth, typeId: p.typeId })), chart: Object.fromEntries(x.planItems.filter(p => p.tooth).map(p => [p.tooth, chart[p.tooth!] || []])) }) })
       const j = await r.json().catch(() => null) as { ok?: boolean; model?: string; result?: { items?: any[]; materials?: any[] }; exhausted?: boolean; leftPct?: number | null } | null
       if (j?.leftPct !== undefined) d.aiInfo.leftPct = j.leftPct
-      if (j?.exhausted) { d.aiInfo.exhausted = true; d.s.prefs.ai = false }
+      // v2.4 19. pont 3.: a keret elfogyásakor magától kikapcsol és szavakkal jelez
+      if (j?.exhausted) { d.aiInfo.exhausted = true; d.s.prefs.ai = false; d.aiInfo.note = 'Az AI-értelmezés most ki van kapcsolva – a keret elfogyott' }
       if (!r.ok || !j?.ok || !j.result) { x.ai = { state: 'err', model: '', items: [], materials: [], error: j?.exhausted ? 'a mai AI-keret elfogyott' : 'az AI-értelmezés nem érhető el' }; return }
       const okType = (id: string) => db.value.types.some(t => t.id === id), okItem = (id: string) => db.value.items.some(i => i.id === id)
       const items = (j.result.items || []).filter(i => i && okType(i.typeId)).map(i => ({ tooth: Number.isInteger(i.tooth) && allTeeth('permanent').concat(allTeeth('primary')).includes(i.tooth) ? i.tooth : null, typeId: String(i.typeId), status: i.status === 'suggested' ? 'suggested' : 'done' }))
@@ -543,7 +648,10 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const teeth = [...new Set(done.map(i => i.tooth).filter((n): n is number => !!n))].sort((a, b) => a - b)
     const surf: SurfaceMap = {}; teeth.forEach(n => { if (surfaces.value[n]?.length) surf[n] = [...surfaces.value[n]!] })
     const tn = typeNames(db.value, typeIds)
-    const common = { doctorId: x.doctorId, typeIds, teeth, surfaces: surf, items: items.value.map(i => ({ id: uid(), tooth: i.tooth, typeId: i.typeId, surfaces: i.surfaces, origin: i.origin, state: i.state as 'done' | 'postponed', fee: i.fee })) as VisitItem[], planned: x.planned, extended: extendedTeeth.value.length > 0, text: x.text.trim(), fee: fee.value, sterBatch: x.sterBatch }
+    let infoQueued = false
+    // v2.4 8. pont: a „Nem történt meg” jelölés a kezelés rögzítését nem módosítja; a megjegyzés a következő alkalom „következő lépése”
+    const notDone = Object.entries(x.notDone).map(([k, note]) => { const [t, typeId] = k.split(':'); return { tooth: Number(t) || null, typeId: typeId!, note } })
+    const common = { notDone: notDone.length ? notDone : undefined, doctorId: x.doctorId, typeIds, teeth, surfaces: surf, items: items.value.map(i => ({ id: uid(), tooth: i.tooth, typeId: i.typeId, surfaces: i.surfaces, origin: i.origin, state: i.state as 'done' | 'postponed', fee: i.fee })) as VisitItem[], planned: x.planned, extended: extendedTeeth.value.length > 0, text: x.text.trim(), fee: fee.value, sterBatch: x.sterBatch }
     const item = (id: string) => db.value.items.find(i => i.id === id)
     let recId: string
     if (x.recordId) {
@@ -576,7 +684,10 @@ export const useTreatmentStore = defineStore('treatment', () => {
         return { ...m, cost, lots: lots.length ? lots : undefined }
       })
       const rec = { id: recId, patientId: x.patientId, appointmentId: x.appointmentId, date: x.date, time: x.time, ...common, materials: used, eeszt: { status: 'pending' as const } }
-      db.value.records.push({ ...rec, patientInfo: { text: patientInfoDraft(db.value, rec), status: 'draft' } })
+      const full = { ...rec, patientInfo: { text: patientInfoDraft(db.value, rec), status: 'draft' as const } }
+      db.value.records.push(full)
+      // v2.4 10. pont: jóváhagyási feladat csak akkor keletkezik, ha a páciens e-mailes értesítést kér
+      infoQueued = queueInfo(db.value, db.value.records[db.value.records.length - 1]!)
     }
     db.value.consents.forEach(c => { if (c.sessKey === x.key) { c.recordId = recId; c.sessKey = null } })
     db.value.attachments.forEach(a => { if (a.sessKey === x.key) { a.recordId = recId; a.sessKey = null } })
@@ -598,10 +709,28 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const chg = statusChanges.value
     if (chg.length) { const m: Record<string, string[]> = {}; chg.forEach(c => { m[c.tooth] = c.to }); patients.addStatus(x.patientId, m, 'Diktálásból rögzítve', 'dictation') }
     dropDraft(x.patientId, x.appointmentId)
+    // v2.4 6. pont: a tanult szabályok használata (mérhetőség); v2.4 15. pont: rövidítések használata, frissítési javaslat, ajánlás
+    const d = dictStore()
+    learnedApplied.value.forEach(l => { l.rule.uses = (l.rule.uses || 0) + 1 })
+    const macroNotes: { kind: 'update' | 'recommend'; text: string; data: unknown }[] = []
+    macroHits.value.forEach(h => {
+      const m = d.s.macros.find(v => v.id === h.macroId); if (!m) return
+      m.uses = (m.uses || 0) + 1; m.lastUsed = new Date().toISOString()
+      m.lines.filter(l => l.kind === 'mat').forEach(l => {
+        const o = x.overrides[l.id]; if (o === undefined || o === (l.qty || 1)) return
+        const k = `${l.id}:${o}`; m.mods = { ...(m.mods || {}), [k]: (m.mods?.[k] || 0) + 1 }
+        if (m.mods[k]! >= 3) macroNotes.push({ kind: 'update', text: `A(z) „${m.name}” rövidítésben a(z) ${lineName(l)} mennyiségét már ${m.mods[k]}× ugyanígy módosítottad (${o}). Frissítsem az alapértéket?`, data: { macroId: m.id, item: l.id, qty: o } })
+      })
+    })
+    const sig = comboSig(typeIds, mats.map(m => m.item))
+    if (typeIds.length + mats.length >= 2 && !macroHits.value.length) {
+      d.s.combos.push({ sig, at: new Date().toISOString() }); if (d.s.combos.length > 400) d.s.combos.splice(0, d.s.combos.length - 400)
+      if (shouldRecommend(d.s.combos, sig, d.s.macros, d.s.dismissedCombos)) macroNotes.push({ kind: 'recommend', text: 'Gyakran diktálod ezt a csoportot – rövidítést készítsek belőle?', data: { sig, typeIds, mats: mats.map(m => ({ item: m.item, qty: m.qty })) } })
+    }
     const nSug = suggestList.value.length
     const pid = x.patientId
     s.value = null
-    return { warns, statusOffer, patientId: pid, recordId: recId, hasInfo: !x.recordId, statusChanged: chg.length, suggested: nSug }
+    return { warns, statusOffer, patientId: pid, recordId: recId, hasInfo: !x.recordId && !infoQueued, infoQueued, statusChanged: chg.length, suggested: nSug, macroNotes }
   }
 
   /* ---------- fogazati státusz felvétele diktálással (2.2.6) ---------- */
@@ -640,6 +769,20 @@ export const useTreatmentStore = defineStore('treatment', () => {
   }
 
   const isDoneAppt = (id: string) => !!recordForAppt(db.value, id)
+  /* ---------- v2.4 8. pont: a tervezett tételek jelölése (elvégezve / még nincs rögzítve / nem történt meg) ---------- */
+  const planMarksNow = computed(() => (s.value ? planMarks(db.value, s.value.planItems, doneItems.value, s.value.notDone) : []))
+  function setNotDone(key: string, note: string | null) { const x = s.value; if (!x) return; if (note === null) delete x.notDone[key]; else x.notDone[key] = note }
+  /** v2.4 6. pont: a „Nem ezt mondtam” javításából automatikusan szabály (a javítás maga a jóváhagyás) */
+  function learnFromCorrection(orig: string, fixed: string): { n: number; conflicts: string[] } {
+    const d = dictStore(), conflicts: string[] = []
+    let n = 0
+    correctionPairs(orig, fixed).forEach(([a, b]) => {
+      const cat = guessCat(b, { typeWords: db.value.types.map(t => norm(t.name).split(' ')[0]!), itemWords: db.value.items.map(i => norm(i.name).split(' ')[0]!) })
+      const r = d.learn(a, b, { scope: scopeOf(cat), cat, source: 'javitas' })
+      if (r) { n++; if (r.conflict) conflicts.push(`„${a}”: korábban „${r.conflict}”, most „${b}”`) }
+    })
+    return { n, conflicts }
+  }
 
   return {
     s, parsed, statusParsed, patient, dentition, active,
@@ -649,5 +792,7 @@ export const useTreatmentStore = defineStore('treatment', () => {
     rows, toReview, rowsReview, flags, pendingFlags, resolveFlag, swapTooth, pipe, promptText, runAi, setChecked, setQty, resetQty, addMaterial, fee, lotPreview, cost, consents,
     attachments, upload, cancel, hasUnsaved, approve, finishDictation, confirmRow, saveDraft, restored, draftOf, dropDraft,
     setMode, setStatusText, statusDraft, setToothStatus, statusConflicts, approveStatus, discardStatus, isDoneAppt,
+    // v2.4
+    aiSoft, takeAiSoft, macroHits, macroOf, macroQuestions, lineOmitted, lineName, setMacroTooth, setMacroOmit, restoreMacroLine, learnedApplied, undoLearned, planMarksNow, setNotDone, learnFromCorrection,
   }
 })

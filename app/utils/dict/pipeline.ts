@@ -8,8 +8,17 @@ import { fuseNumbers } from './numbers'
 import { nearest, THRESHOLDS, type ThresholdKey } from './similar'
 import type { Vocab } from './vocab'
 
-export interface PersonalRule { id: string; from: string; to: string; active: boolean; source: 'kezi' | 'betanitas' | 'tanult' | 'javitas'; recognizer?: string; created: string }
-export type FlagKind = 'similar' | 'ambig' | 'repeat' | 'dense' | 'chart' | 'prebooked' | 'qty' | 'ai' | 'life'
+export interface PersonalRule {
+  id: string; from: string; to: string; active: boolean; source: 'kezi' | 'betanitas' | 'tanult' | 'javitas' | 'kozponti'; recognizer?: string; created: string
+  /** v2.4 6. pont: kiejtési (a beszélőre érvényes) vagy szakmai (a rendelő minden felhasználójára érvényes) javítás; kategória; ág; használat */
+  scope?: 'szemely' | 'rendelo'
+  cat?: string
+  branch?: string
+  /** hányszor futott le; az első alkalmazás jelölése (fogszám / művelet / anyag módosításánál) */
+  uses?: number
+  applied?: number
+}
+export type FlagKind = 'similar' | 'ambig' | 'repeat' | 'dense' | 'chart' | 'prebooked' | 'qty' | 'ai' | 'life' | 'macro'
 export interface FlagChoice { id: string; label: string; hint?: string }
 export interface DictFlag { key: string; kind: FlagKind; title: string; detail?: string; choices: FlagChoice[]; /** csak tudomásul vétel („Rendben”) */ info?: boolean; /** automatikus előfeltöltés: ajánlott választás */ suggested?: string; data?: Record<string, unknown> }
 export interface PipeStep { kind: 'filter' | 'repeat' | 'personal' | 'base' | 'similar' | 'pick' | 'filler'; from: string; to: string }
