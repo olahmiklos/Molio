@@ -97,7 +97,7 @@ describe('betanítás és pontosságmérés', () => {
   it('rosszul hallott szó a javaslatban', async () => {
     const { wrongTerms } = await import('../app/utils/dict/train')
     const w = wrongTerms('polírpaszta öt darab', 'polír pasta öt darab')
-    expect(w.some(x => x.said === 'polirpaszta')).toBe(true)
+    expect(w.some(x => x.said === 'polírpaszta')).toBe(true)
   })
   it('vessző utáni felszín-rövidítés a fogé', () => {
     expect(A('Fog huszonöt, MO kompozit tömés.').surfaces[25]!.sort()).toEqual(['M', 'O'])

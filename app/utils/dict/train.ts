@@ -3,6 +3,7 @@
 import { norm } from '../dates'
 import { analyze, type ParseResult } from '../parser'
 import { lev } from './similar'
+import { canonSpans } from './quality'
 import { preprocess, type PersonalRule } from './pipeline'
 import type { Vocab } from './vocab'
 import type { Item, TreatmentType } from '../types'
@@ -44,19 +45,27 @@ export function score(ref: Facts, hyp: Facts): Score {
   return { total, ok, byCat }
 }
 export interface Wrong { said: string; heard: string; cat: string }
-const words = (s: string) => norm(s).replace(/[^a-z0-9 -]+/g, ' ').split(/\s+/).filter(Boolean)
-/** rosszul felismert kifejezések: a felolvasott szó, amely nincs a hallott szövegben, és a hozzá legközelebbi, felesleges hallott szó */
+/** a kijelzett alak: az eredeti (ékezetes) szó; a mondatkezdő nagybetű nélkül, a csupa nagybetűs rövidítés (MO, MOD) marad */
+const shownForm = (s: string) => (s.length > 1 && s === s.toUpperCase() && s !== s.toLowerCase() ? s : s.toLocaleLowerCase('hu'))
+/** két eltérés ugyanaz-e (ékezettől, kis-nagybetűtől függetlenül; a régebbi, ékezet nélkül mentett betanítási eltérésekkel is összevethető) */
+export const sameWrong = (x: { said: string; heard: string }, y: { said: string; heard: string }) => norm(x.said).trim() === norm(y.said).trim() && norm(x.heard).trim() === norm(y.heard).trim()
+/** rosszul felismert kifejezések: a felolvasott szó, amely nincs a hallott szövegben, és a hozzá legközelebbi, felesleges hallott szó.
+ * A szavak érték szerint párosulnak (B-017: „36-os” = „harminchatos”, „harminc-hat” = „harminchat”, „három egész hat” = „3,6”), darabszám szerint;
+ * a kijelzés az eredeti, ékezetes alakot mutatja (B-019). */
 export function wrongTerms(said: string, heard: string, catOf: (w: string) => string = () => 'szöveg'): Wrong[] {
-  const a = words(said), b = words(heard)
-  const spare = [...b]; a.forEach(w => { const i = spare.indexOf(w); if (i >= 0) spare.splice(i, 1) })
+  const a = canonSpans(said), b = canonSpans(heard)
+  const used = new Array(b.length).fill(false), hit = new Array(a.length).fill(false)
+  // azonos érték / azonos szó (a ragozott alakokat a hívó szűri: sameWord)
+  a.forEach((w, i) => { const j = b.findIndex((x, k) => !used[k] && x.key === w.key); if (j >= 0) { used[j] = true; hit[i] = true } })
   const out: Wrong[] = []
-  for (const w of a) {
-    if (b.includes(w)) continue
-    let best = '', d = 99
-    spare.forEach(x => { const l = lev(w, x); if (l < d && l <= Math.max(3, Math.ceil(w.length * 0.6))) { d = l; best = x } })
-    if (best) spare.splice(spare.indexOf(best), 1)
-    out.push({ said: w, heard: best || '(kimaradt)', cat: catOf(w) })
-  }
+  a.forEach((w, i) => {
+    if (hit[i]) return
+    let best = -1, d = 99
+    const wn = w.norm.replace(/\s+/g, '')
+    b.forEach((x, k) => { if (used[k]) return; const l = lev(wn, x.norm.replace(/\s+/g, '')); if (l < d && l <= Math.max(3, Math.ceil(wn.length * 0.6))) { d = l; best = k } })
+    if (best >= 0) used[best] = true
+    out.push({ said: shownForm(w.orig), heard: best >= 0 ? shownForm(b[best]!.orig) : '(kimaradt)', cat: catOf(w.norm) })
+  })
   return out
 }
 export const pct = (ok: number, total: number) => total ? Math.round(ok / total * 100) : 100

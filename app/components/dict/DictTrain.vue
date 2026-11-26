@@ -14,10 +14,10 @@ import { useTreatmentStore } from '~/stores/treatment'
 import { useUiStore } from '~/stores/ui'
 import { useVoiceStore, type DictResult } from '~/stores/voice'
 import { buildVocab } from '~/utils/dict/vocab'
-import { CATS, TRAIN_SECTIONS, facts, pct, score, wrongTerms, type Wrong } from '~/utils/dict/train'
+import { CATS, TRAIN_SECTIONS, facts, pct, sameWrong, score, wrongTerms, type Wrong } from '~/utils/dict/train'
 import { canonTokens, rating, reliableSuggestion, sameWord, veryDifferent, wordAccuracy } from '~/utils/dict/quality'
 import { DEV_TOOLS } from '~/utils/meta'
-import { fmtDT } from '~/utils/dates'
+import { fmtDT, norm } from '~/utils/dates'
 const DevDiag = __MOLIO_DEV__ ? defineAsyncComponent(() => import('~/components/dev/DevDiag.vue')) : null
 
 const data = useDataStore(), dict = useDictStore(), voice = useVoiceStore(), tx = useTreatmentStore(), ui = useUiStore()
@@ -70,22 +70,22 @@ const reason = (p: Part) => (p.none ? 'Nem érkezett hang – ellenőrizze a mik
 
 /* ---------- javaslatok: csak megbízható eltérésből (19. pont 6.) ---------- */
 const seenTimes = (w: Wrong) => {
-  const here = done.value.flatMap(s => wrongOf(s.id, parts[s.id]!.text)).filter(x => x.said === w.said && x.heard === w.heard).length
-  const before = dict.s.training.filter(t => t.id !== runId.value).flatMap(t => t.wrong).filter(x => x.said === w.said && x.heard === w.heard).length
+  const here = done.value.flatMap(s => wrongOf(s.id, parts[s.id]!.text)).filter(x => sameWrong(x, w)).length
+  const before = dict.s.training.filter(t => t.id !== runId.value).flatMap(t => t.wrong).filter(x => sameWrong(x, w)).length
   return here + before
 }
 const allWrong = computed(() => valid.value.flatMap(s => wrongOf(s.id, parts[s.id]!.text)))
 const proposals = computed(() => {
   const seen = new Set<string>()
-  return allWrong.value.filter(w => w.heard !== '(kimaradt)' && !dict.s.personal.some(p => p.from.toLowerCase() === w.heard) && reliableSuggestion(w.said, w.heard, seenTimes(w)))
-    .filter(w => { const k = w.heard + '→' + w.said; return seen.has(k) ? false : (seen.add(k), true) })
+  return allWrong.value.filter(w => w.heard !== '(kimaradt)' && !dict.s.personal.some(p => norm(p.from).trim() === norm(w.heard).trim()) && reliableSuggestion(w.said, w.heard, seenTimes(w)))
+    .filter(w => { const k = sugKey(w); return seen.has(k) ? false : (seen.add(k), true) })
 })
-const sectionProposals = (id: string) => { const p = parts[id]; if (!p || p.noSpeech) return [] as Wrong[]; return wrongOf(id, p.text).filter(w => w.heard !== '(kimaradt)' && proposals.value.some(x => x.said === w.said && x.heard === w.heard)) }
+const sectionProposals = (id: string) => { const p = parts[id]; if (!p || p.noSpeech) return [] as Wrong[]; return wrongOf(id, p.text).filter(w => w.heard !== '(kimaradt)' && proposals.value.some(x => sameWrong(x, w))) }
 const veryDiff = (id: string) => { const p = parts[id]; if (!p || p.noSpeech) return [] as Wrong[]; return wrongOf(id, p.text).filter(w => w.heard !== '(kimaradt)' && veryDifferent(w.said, w.heard) && seenTimes(w) < 2) }
-const sugKey = (w: Wrong) => w.heard + '→' + w.said
+const sugKey = (w: Wrong) => norm(w.heard) + '→' + norm(w.said)
 const gone = ref<string[]>([])
 const shown = computed(() => proposals.value.filter(w => !gone.value.includes(sugKey(w))))
-const isNum = (w: Wrong) => canonTokens(w.said + ' ' + w.heard).some(x => /^\d+$/.test(x))
+const isNum = (w: Wrong) => canonTokens(w.said + ' ' + w.heard).some(x => /^\d+(\.\d+)?$/.test(x))
 const accept = (w: Wrong) => { dict.addPersonal(w.heard, w.said, 'betanitas', dict.s.prefs.recognizer); gone.value.push(sugKey(w)); ui.toast('Jóváhagyva – a következő diktálásoknál magától lefut') }
 const reject = (w: Wrong) => { gone.value.push(sugKey(w)) }
 

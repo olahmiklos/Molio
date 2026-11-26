@@ -25,16 +25,72 @@ export function wordNumber(w: string): number | null {
   const stripped = w.replace(NUM_SUFFIX, '')
   return stripped !== w && stripped.length >= 2 ? tryOne(stripped) : null
 }
-/** kanonikus szavak: kisbetű, ékezet nélkül, a számnevek számjegyként („36-os” → 36, „harminchatos” → 36) */
+/** a számjegy utáni rag („36-os”, „3,6-ot”) – nem önálló szó */
+const BARE_SUFFIX = /^(os|es|as|ost|est|ast|ot|et|at|ra|re|on|en|an|nal|nel|tol|tel|ig)$/
+/** különírt rag-maradék („36 os”) – a régi szűrő listája */
+const LONE_SUFFIX = /^(os|es|as|ost|est|ast|ra|re|on|en|an)$/
+const NUMKEY = /^\d+(\.\d+)?$/
+/** egy kanonikus szó és az eredeti (ékezetes) alakja a szövegben; a „három egész hat” egy szó (3.6) */
+export interface CanonSpan { key: string; orig: string; norm: string }
+/**
+ * kanonikus szavak az eredeti alakkal (B-017, B-019): kisbetű, ékezet nélkül, a számnevek számjegyként
+ * („36-os”, „harminchatos”, „harminc-hat” → 36; „3,6”, „3.6”, „három egész hat” → 3.6)
+ */
+export function canonSpans(text: string): CanonSpan[] {
+  const out: CanonSpan[] = []
+  const raw = String(text || '').match(/[\p{L}\p{N}]+(?:[-.,][\p{L}\p{N}]+)*/gu) || []
+  for (const w of raw) {
+    const n = norm(w)
+    const dec = /^(\d+)[.,](\d+)([a-z]*)$/.exec(n)
+    if (dec) {
+      const unit = dec[3]!, o = unit ? w.slice(0, w.length - unit.length) : w
+      out.push({ key: `${parseInt(dec[1]!, 10)}.${dec[2]}`, orig: o, norm: norm(o) })
+      if (unit && !BARE_SUFFIX.test(unit)) out.push({ key: unit, orig: w.slice(o.length), norm: unit })
+      continue
+    }
+    const dg = /^(\d+(?:[.,]\d+)?)-([a-z]+)$/.exec(n)
+    if (dg && BARE_SUFFIX.test(dg[2]!)) { out.push(...canonSpans(w.replace(/-[\p{L}]+$/u, '')).map(s => ({ ...s, orig: w, norm: n }))); continue }
+    const parts = w.split(/[-.,]/).filter(Boolean)
+    if (parts.length === 2 && /-/.test(w)) {
+      const joined = wordNumber(norm(parts.join('')))
+      if (joined !== null && !/\d/.test(n)) { out.push({ key: String(joined), orig: w, norm: n }); continue }
+    }
+    for (const p of parts) {
+      const pn = norm(p)
+      if (BARE_SUFFIX.test(pn) && parts.length > 1) continue
+      const glued = /^(\d+)([a-z]+)$/.exec(pn)
+      if (glued) {
+        out.push({ key: String(parseInt(glued[1]!, 10)), orig: p.slice(0, glued[1]!.length), norm: glued[1]! })
+        if (!BARE_SUFFIX.test(glued[2]!)) out.push({ key: glued[2]!, orig: p.slice(glued[1]!.length), norm: glued[2]! })
+        continue
+      }
+      const v = wordNumber(pn)
+      out.push({ key: v !== null ? String(v) : pn, orig: p, norm: pn })
+    }
+  }
+  // „három egész hat”, „három vessző hat (tized)” → 3.6
+  const res: CanonSpan[] = []
+  for (let i = 0; i < out.length; i++) {
+    const a = out[i]!, m = out[i + 1], b = out[i + 2]
+    if (/^\d+$/.test(a.key) && m && /^(egesz|vesszo)$/.test(m.key) && b && /^\d+$/.test(b.key) && !/\d/.test(m.orig)) {
+      const t = out[i + 3]?.key === 'tized' ? out[i + 3]! : null
+      const parts = [a, m, b, ...(t ? [t] : [])]
+      res.push({ key: `${a.key}.${b.key}`, orig: parts.map(x => x.orig).join(' '), norm: parts.map(x => x.norm).join(' ') })
+      i += t ? 3 : 2; continue
+    }
+    if (LONE_SUFFIX.test(a.key)) continue
+    res.push(a)
+  }
+  return res
+}
+/** kanonikus szavak: kisbetű, ékezet nélkül, a számnevek számjegyként („36-os” → 36, „harminchatos” → 36, „harminc-hat” → 36, „3,6” → 3.6) */
 export function canonTokens(text: string): string[] {
-  const t = norm(text).replace(/(\d)\s*-\s*([a-z])/g, '$1 $2').replace(/[^a-z0-9]+/g, ' ').trim()
-  if (!t) return []
-  return t.split(' ').filter(Boolean).map(w => { const n = wordNumber(w); return n !== null ? String(n) : w }).filter(w => !/^(os|es|as|ost|est|ast|ra|re|on|en|an)$/.test(w))
+  return canonSpans(text).map(s => s.key)
 }
 /** két kanonikus szó egyezik-e (ragozott alakok: azonos, legalább 4 betűs szótő, vagy nagy írásképi hasonlóság) */
 export function sameWord(a: string, b: string): boolean {
   if (a === b) return true
-  if (/^\d+$/.test(a) || /^\d+$/.test(b)) return false
+  if (NUMKEY.test(a) || NUMKEY.test(b)) return false
   const k = Math.min(a.length, b.length)
   if (k >= 4 && a.slice(0, Math.max(4, k - 2)) === b.slice(0, Math.max(4, k - 2))) return true
   return k >= 5 && similarity(a, b) >= 0.85
@@ -96,7 +152,7 @@ export function wordDiff(expected: string, heard: string): { word: string; ok: b
 /** „nagyon eltér” (19/3): a két szó írásképi hasonlósága 50% alatt, vagy számnál eltérő érték */
 export function veryDifferent(said: string, heard: string): boolean {
   const a = canonTokens(said).join(' '), b = canonTokens(heard).join(' ')
-  const na = canonTokens(said).filter(x => /^\d+$/.test(x)), nb = canonTokens(heard).filter(x => /^\d+$/.test(x))
+  const na = canonTokens(said).filter(x => NUMKEY.test(x)), nb = canonTokens(heard).filter(x => NUMKEY.test(x))
   if ((na.length || nb.length) && na.join(',') !== nb.join(',')) return true
   if (!a || !b) return true
   return similarity(a.replace(/\s+/g, ''), b.replace(/\s+/g, '')) < 0.5
