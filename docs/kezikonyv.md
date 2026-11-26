@@ -145,9 +145,69 @@ A **Jóváhagyás és mentés** gomb után:
 
 Egy korábbi kezelés a kartonon a **Szerkesztés** gombbal módosítható; a különbözet a raktárban korrekcióként jelenik meg.
 
+## Tanult javítások és értelmezések (v2.5)
+
+- Ha kijavítasz egy félreértett szót („Nem ezt mondtam”, vagy a ⚠ sor választása), a program a következő diktálástól magától javítja.
+- Ha a szöveg jó volt, de a program rosszul értelmezte (pl. kézzel átírod a mennyiséget, a ⚠ sorban másik fogat vagy anyagot választasz), a javításból **értelmezési szabály** lesz, pl. „kérek öt tampont” → Vattatampon 5 db. Ez a rendelő minden felhasználójára érvényes.
+- A fogszámot, műveletet vagy anyagot módosító tanult szabály első alkalmazásakor a sor **„Korábbi javításod alapján”** jelölést kap, és a **Visszavonás** gombbal egy koppintással visszavonható.
+- A tanult javítások listája: **Beállítások → Diktálás → Tanult javítások / Tanult értelmezések** (megtekinthető, kikapcsolható, törölhető). A demóban a tanult javítások ezen az eszközön érvényesek; a diktálás mentésekor központilag is mentődnek.
+
 ## Fogazati státusz felvétele diktálással
 
 A kezelés képernyőn a **Státuszfelvétel** gombbal válthatsz. Mondd fogról fogra: „18-as és 28-as hiányzik, 16-os korona, 36-os tömött, 13-tól 23-ig ép, a többi ép.” Ilyenkor a program nem jelöl ki kezelést, és nem von le anyagot. A felismert státusz vázlat: a fogra kattintva javítható, és csak a jóváhagyás után mentődik. Ha a diktált állapot ellentmond a korábbi kezeléseknek, a program jelzi.
+
+# Diktálás betanítása – lépésről lépésre
+
+Ez a fejezet a main ági (fogorvosoknak szóló) egyszerű nézetet írja le. A teszt ági részleteket a fejezet végén a „Fejlesztői nézet (csak a teszt ágon)” szakasz tartalmazza.
+
+## Mire való?
+
+A betanítás nem a hangodat tanítja a gépnek. Azt méri, mely szavakat érti félre a felismerő nálad, ezen az eszközön és ezzel a mikrofonnal, és ezekből javítási szabályt javasol. A jóváhagyott szabályok minden további diktálásnál maguktól lefutnak.
+
+A demóban a tanult javítások ezen az eszközön (ebben a böngészőben) érvényesek. Kb. 2 perc; ajánlott, nem kötelező. Az éles bevezetés előtt minden diktáló felhasználónak el kell végeznie.
+
+## Előkészület
+
+- Csendes hely, és az az eszköz és mikrofon, amellyel a rendelőben ténylegesen diktálsz.
+- Természetes tempóban beszélj, úgy, ahogy kezelés közben diktálsz.
+
+## Lépések
+
+1. Nyisd meg: **Beállítások → Diktálás betanítása**. A képernyő tetején a **Hogyan használd?** sor lenyitva röviden összefoglalja a lépéseket.
+2. Az első szakasznál nyomd meg a **Felolvasom** gombot, és olvasd fel a szöveget egyben. Felvétel közben a sávon látod a hátralévő időt (szakaszonként legfeljebb 30 másodperc); a gomb ilyenkor **Leállítás**. Ha elszóltad magad, mondd el újra.
+3. Visszajelzés a szakasz után: **Jól felismertem** (zöld): nyomd meg a **Tovább** gombot. **Néhány szót másképp hallottam** (sárga): látod a szavakat (pl. felolvasott: fog – hallott: fok). Itt még nem döntesz a szabályról: a **Tovább így is** csak továbblép, a program megjegyzi az eltérést. Ha elszóltad magad, vagy nagyon más lett: **Mondja el újra**. **Nem sikerült megérteni** (piros): a program kiírja az okot (pl. halk hang); javíts rajta, és nyomd meg a **Mondja el újra** gombot.
+4. A visszajelzés alatt látod, mit tanult a program: „1 új javítási javaslat készült” vagy „Nincs új javítás”.
+5. Folytasd a többi szakasszal. Nem kell mindnek zöldnek lennie: a sárga szakaszokból lesz a javaslat.
+6. A végén, az Összefoglalóban döntsd el a javaslatokat egyenként (pl. „ha ezt hallja: fok → értse úgy: fog”). Tömeges jóváhagyás nincs.
+7. Mentés: automatikus, külön „Eredmény mentése” gomb nincs. Az előzmények a képernyő alján látszanak.
+
+## Mikor hagyd jóvá a javaslatot?
+
+A kulcskérdés nem az, hogy hasonlít-e a két szó, hanem ez: **előfordulhat, hogy a diktálásban a hallott szót valóban azt akarod mondani?** Ezt a kérdést a program minden javaslat mellett kiírja.
+
+- **Nem fordulhat elő:** „Jóváhagyom” (pl. „fok” → „fog”, ha nem diktálsz hőmérsékletről vagy szögről; „harmincsat” → „harminchat”).
+- **Igen, előfordulhat:** „Nem” (pl. ha a „hat”-ot „negyvenhét”-nek értené, a szabály minden helyes „hat”-ot elrontana). Számoknál és fogszámoknál légy a legóvatosabb.
+- **Bizonytalan vagy:** „Nem”. Ha az eltérés rendszeres, a program később újra felveti.
+- Nagyon eltérő szavaknál a program nem javasol szabályt, hanem ismétlést kér.
+- A jóváhagyott szabály azonnal él. Megtekinthető, kikapcsolható, törölhető: **Beállítások → Diktálás → Tanult javítások**, illetve **Beállítások → Kódtáblák és szinonimák → Személyes javítások**.
+
+## Mit jelent az eredmény?
+
+- Az Összefoglalóban szavas minősítés látszik: **jó**, **közepes** vagy **gyenge**. Ez azt mutatja, a felolvasott kifejezések mekkora részét ismerte fel helyesen a felismerő – nem a te pontszámod.
+- A gyenge eredmény nem hiba: éppen ez a betanítás nyersanyaga.
+- Értelmetlen szöveg vagy „Nem érkezett értelmezhető beszéd” üzenet esetén a hang vagy a kapcsolat volt a gond (halk mikrofon, nincs hálózat): mondd el újra. Ez a szakasz nem számít bele az eredménybe.
+- Ha a „Most a tartalék felismerő dolgozott” üzenet jelenik meg, nincs teendőd.
+
+## Mikor érdemes megismételni?
+
+- Új eszköz vagy új mikrofon esetén.
+- Ha a diktálás újra gyakran téveszt. Ismételt betanításnál az Összefoglaló megmutatja, javult-e az előzőhöz képest; az **Újrakezdés** gombbal bármikor újraindítható.
+
+## Fejlesztői nézet (csak a teszt ágon)
+
+- A szakaszok mellett százalék látszik, felismerőnként feliratozva (pl. „Whisper: 80% – böngésző: 70%”): mindegyik a saját felirata szerinti felismerőre vonatkozik; a jobbat a program magától kezeli.
+- A szavas minősítés határai: jó 90% felett, közepes 75–89%, gyenge 75% alatt.
+- Az Összefoglalóban a felismerőnkénti és a kategóriánkénti százalék, az Előzményekben a felismerő és a zajszűrés is látszik; a „Fejlesztői részletek” panel a nyers szövegeket mutatja.
 
 # Páciens-tájékoztató orvosi jóváhagyással
 
@@ -255,20 +315,20 @@ A páciens kartonján a nap fejlécében lévő **Számla előkészítése** gom
 
 # Beállítások
 
-A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („Demó v2.3 – a specifikáció v2.3 alapján készült”), a build idejét és a kódazonosítót, a használt felismerőt és AI-modellt, a diktálás-értelmezés pontossági mérését (tesztkészlet, az előző kiadáshoz képest), itt van a **Frissítés keresése** gomb és a másolható verzióadat (hibabejelentéshez). A teszt- és a demókörnyezetet jelölés különbözteti meg.
+A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („Demó v2.5 – a specifikáció v2.5 alapján készült”), a build idejét és a kódazonosítót, a használt felismerőt és AI-modellt, a diktálás-értelmezés pontossági mérését (tesztkészlet, az előző kiadáshoz képest), itt van a **Frissítés keresése** gomb és a másolható verzióadat (hibabejelentéshez). A teszt- és a demókörnyezetet jelölés különbözteti meg.
 
-- **Klinika:** név, cím, telefon, rendelési idő, a tejfogazat javaslatának korhatára, a ráhagyás hossza, a mintaadatok visszaállítása.
+- **Klinika:** név, cím, telefon, rendelési idő, a tejfogazat javaslatának korhatára, a ráhagyás hossza, a mintaadatok visszaállítása. A **Beosztás → Rendelő (alaprajz)** részben új rendelő vehető fel (automatikus sorszámozott névvel, pl. „3. rendelő”, átírható), a rendelő, a váróterem és az egyéb helyiségek a **Törlés** gombbal törölhetők (megerősítéssel). Ha a rendelőhöz orvos vagy jövőbeli időpont tartozik, előbb át kell rendelni; ha csak múltbeli adat kapcsolódik hozzá, törlés helyett inaktiválható (az alaprajzról és a választókból eltűnik, a múltbeli adatokban megmarad).
 - **Értesítések:** az alapértelmezett emlékeztető és az SMS-, e-mail-sablonok előnézettel.
 - **Kezelési csomagok:** kezeléstípusonként az alapidő, a ráhagyás, a díj (tömésnél felszínszám szerint), a kontroll-meghívó időköze, a beleegyező nyilatkozat sablonja, a szín, a diktálási kulcsszavak és az anyagcsomag (alkalmanként, foganként vagy felszínenként). 
 - **Diktálás (v2.3):** felismerő-választó (pontos / alap), élő előnézet, zajszűrés, hasonlósági érzékenység, AI-értelmezés kapcsoló, az AI hozzáadott értéke és az „Így diktálj” súgó.
-- **Diktálás betanítása (v2.3):** hangpróba szakaszonként, pontosság kategóriánként, személyes javítások javaslata, előzmények.
+- **Diktálás betanítása:** hangpróba szakaszonként, visszajelzés, javaslatok egyenkénti jóváhagyása, előzmények – részletesen a „Diktálás betanítása – lépésről lépésre” fejezetben.
 - **Kódtáblák és szinonimák:** szinonimatábla, kódtáblák, a **fogazati státusz felismerési szótára** (korábban a Kezelési csomagoknál), a diktálási **alapszótár**, **személyes javítások**, kitaláció-szűrő, **ismeretlen kifejezések** (egy lépésben hozzárendelhetők), összeférhetőségi szabályok, tanult szabályok és a javítási napló.
 - **Anyag-törzsadatok:** anyagcsoportok és anyagok, beszállító, beszerzési idő, átlagár, célkészlet.
 - **Kapcsolatok:** az EESZT, a számlázó program és a mesterséges intelligencia bekötésének leírása (a demóban szemléltetés).
 
 # Gyakori kérdések
 
-**Mi az az „Új verzió érhető el” ablak? (v2.3)** A nyilvános (main) demón új kiadáskor felugró ablak jelzi az új verziót; az **OK** gomb után az oldal újratöltődik. A folyamatban lévő diktálást előtte piszkozatba mentjük, újratöltés után felajánljuk a folytatást.
+**Mi az az „Új verzió érhető el” ablak? (v2.3, v2.5)** A nyilvános (main) demón új kiadáskor felugró ablak jelzi az új verziót; nem tűnik el magától, és az oldal csak az **OK** gomb után töltődik újra – magától, csendben soha (iPhone-on és iPaden, a Kezdőképernyőre mentett alkalmazásban is). A folyamatban lévő diktálást előtte piszkozatba mentjük, újratöltés után felajánljuk a folytatást.
 
 **Miért nem látom a másik gépen rögzített adatot?** A demó az adatokat csak abban a böngészőben tárolja, ahol rögzítetted. A végleges rendszerben az adatok központi adatbázisban lesznek.
 
@@ -281,6 +341,14 @@ A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („De
 **Hogyan kezdhetem elölről a kipróbálást?** Beállítások → Klinika → Visszaállítás alaphelyzetbe.
 
 # Verziótörténet
+
+## 2.5
+
+- Hibajavítás (B-008): a main ágon az oldal nem frissül magától; az új verziót mindig a felugró ablak jelzi, újratöltés csak az OK után.
+- „Diktálás betanítása – lépésről lépésre” fejezet a Súgóban és a kézikönyvben; „Hogyan használd?” útmutató és döntési kérdés a betanítás képernyőn.
+- Rendelő, váróterem és egyéb helyiség törlése a Klinika → Beosztás → Rendelő (alaprajz) részben; inaktiválás múltbeli adatnál.
+- Értelmezési javítások tanulása és mérése („Korábbi javításod alapján” jelölés, visszavonás, összesítő a Tanult szabályok fülön).
+- Hibajavítás (B-015): az alaprajz rács elrendezésű, az elemek tetszőleges számú rendelőnél sem csúsznak egymásra.
 
 ## 2.3
 

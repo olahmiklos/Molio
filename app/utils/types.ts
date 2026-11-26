@@ -23,7 +23,8 @@ export interface StatusDef {
 
 export interface Company { id: string; name: string; address: string; phone: string; email: string }
 export interface Site { id: string; companyId: string; name: string; address: string; phone: string; startHour: number; endHour: number }
-export interface Room { id: string; siteId: string; name: string }
+/** v2.5 3. pont: az inaktív rendelő az alaprajzról és a választókból eltűnik, a múltbeli adatokban megmarad */
+export interface Room { id: string; siteId: string; name: string; active?: boolean }
 
 export interface Settings {
   clinic: string

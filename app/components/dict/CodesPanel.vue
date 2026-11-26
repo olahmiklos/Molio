@@ -48,6 +48,11 @@ function assignU(term: string) {
 const STATES = computed(() => st.value.statusDict)
 const tog = (typeId: string, stId: string) => { const a = dict.s.compat[typeId] || (dict.s.compat[typeId] = []); const i = a.indexOf(stId); if (i >= 0) a.splice(i, 1); else a.push(stId) }
 const recent = computed(() => dict.s.log.slice(-60).reverse())
+/** v2.5 4. pont 4.: a tanult szabályok mérése (szó- és értelmezési szabályok együtt) */
+const measured = computed(() => [
+  ...dict.s.personal.map(p => ({ id: p.id, from: p.from, to: '„' + p.to + '”', kind: 'szó', uses: p.uses || 0, corrected: p.corrected || 0 })),
+  ...dict.s.interp.map(r => ({ id: r.id, from: r.from, to: r.to, kind: 'értelmezés · ' + r.cat, uses: r.uses || 0, corrected: r.corrected || 0 })),
+].map(m => ({ ...m, rate: m.uses ? m.corrected / m.uses : null })).sort((a, b) => b.uses - a.uses))
 </script>
 
 <template>
@@ -149,6 +154,12 @@ const recent = computed(() => dict.s.log.slice(-60).reverse())
       <h3 style="margin-top:16px">Elfogadott mennyiségi szabályok</h3>
       <div v-for="(q, i) in dict.s.qtyRules" :key="q.pattern" class="row small">{{ q.label }} <button class="btn sm" @click="dict.s.qtyRules.splice(i, 1)">Visszavonás</button></div>
       <div v-if="!dict.s.qtyRules.length" class="small muted">nincs</div>
+      <!-- v2.5 4. pont 4.: összesítő – lefutások és utólagos javítások aránya szabályonként -->
+      <h3 style="margin-top:16px">Tanult szabályok mérése</h3>
+      <p class="small muted" style="margin-top:0">Szabályonként: hányszor futott le egy mentett diktálásban, és hányszor kellett utána mégis javítani (visszavonás, vagy eltérő kézi érték). A magas arány rossz szabályra utal – kapcsold ki vagy töröld (Beállítások → Diktálás → Tanult javítások).</p>
+      <div v-if="measured.length" class="scroll-x" data-test="szabaly-meres"><table class="t ss"><thead><tr><th>Szabály</th><th>Fajta</th><th>Lefutott</th><th>Utólag javítva</th><th>Arány</th></tr></thead>
+        <tbody><tr v-for="m in measured" :key="m.id"><td class="small">„{{ m.from }}” → {{ m.to }}</td><td class="small">{{ m.kind }}</td><td class="small">{{ m.uses }}×</td><td class="small">{{ m.corrected }}×</td><td class="small"><b :style="m.rate !== null && m.rate >= 0.3 ? 'color:var(--red)' : ''">{{ m.rate === null ? '–' : Math.round(m.rate * 100) + '%' }}</b></td></tr></tbody></table></div>
+      <div v-else class="small muted">Még nincs tanult szabály.</div>
       <h3 style="margin-top:16px">Javítási arány kategóriánként</h3>
       <div class="row"><span v-for="(n, k) in dict.rates" :key="k" class="badge b-gray">{{ k }}: {{ n }}</span><span v-if="!Object.keys(dict.rates).length" class="small muted">még nincs bejegyzés</span></div>
       <div v-if="dict.s.aiStats.runs || dict.s.aiStats.diffs" class="hint" style="margin-top:10px"><b>AI hozzáadott értéke:</b> {{ dict.s.aiStats.runs }} diktálásnál futott, {{ dict.s.aiStats.diffs }} eltérés; eltérésnél az AI-nak {{ dict.s.aiStats.aiRight }}×, a szabálynak {{ dict.s.aiStats.ruleRight }}× volt igaza.</div>

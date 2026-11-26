@@ -9,6 +9,7 @@ import { addDays, DAYS, dow, esc, fmtShort, today, uid } from '~/utils/dates'
 import { recordForAppt } from '~/utils/logic'
 import type { Period, WeekTpl } from '~/utils/types'
 import { affectedBy, assistantClashes, assistantsOn, defaultDoctorTpl, defaultReceptionTpl, doctorTpl, DOC_COLORS, GRID, hasOverride, PASTEL, periodsOn, periodsText, receptionGaps, receptionTpl, weekText } from '~/utils/schedule'
+import { activeRooms, deleteRoom, nextRoomName, roomRemoval, setRoomActive } from '~/utils/v25'
 import WeekTplEditor from './WeekTplEditor.vue'
 
 const data = useDataStore(), ui = useUiStore()
@@ -55,7 +56,7 @@ async function backToTpl() {
 function addDoctor() {
   const i = db.value.doctors.length
   const id = 'dr-' + uid().slice(0, 6)
-  db.value.doctors.push({ id, name: 'Dr. Új orvos', color: DOC_COLORS[i % DOC_COLORS.length], roomId: db.value.rooms[0]?.id, assistantIds: [], active: true })
+  db.value.doctors.push({ id, name: 'Dr. Új orvos', color: DOC_COLORS[i % DOC_COLORS.length], roomId: activeRooms(db.value)[0]?.id, assistantIds: [], active: true })
   sch.value.doctor[id] = defaultDoctorTpl()
   ui.toast('Új orvos felvéve – a heti sablon kedd–péntek 10:00–20:00 (módosítható)')
 }
@@ -73,7 +74,29 @@ async function delPerson(kind: 'assistants' | 'receptionists', id: string) {
   staff.value[kind] = staff.value[kind].filter(x => x.id !== id) as never
 }
 function addWaiting() { staff.value.waiting.push({ id: 'w-' + uid().slice(0, 6), name: `${staff.value.waiting.length + 1}. váró` }) }
-function addRoom() { db.value.rooms.push({ id: 'room-' + uid().slice(0, 6), siteId: db.value.sites[0]?.id || 'site-1', name: `${db.value.rooms.length + 1}. rendelő` }) }
+/* ---------- v2.5 3. és 5. pont: rendelő felvétele (automatikus sorszámozott név), törlése, inaktiválása ---------- */
+function addRoom() {
+  const name = nextRoomName(db.value.rooms)
+  db.value.rooms.push({ id: 'room-' + uid().slice(0, 6), siteId: db.value.sites[0]?.id || 'site-1', name, active: true })
+  ui.toast(`Új rendelő felvéve: ${name} – a neve átírható`)
+}
+const isDoneAppt = (a: { id: string }) => isDone(a)
+async function removeRoom(id: string) {
+  const r = db.value.rooms.find(x => x.id === id); if (!r) return
+  const v = roomRemoval(db.value, id, isDoneAppt)
+  if (v.kind === 'blocked') { await ui.confirm(`A(z) <b>${esc(r.name)}</b> nem törölhető, mert kapcsolódik hozzá: ${v.reasons.map(esc).join('; ')}. Előbb rendeld át (Orvosok és asszisztensek → rendelő), utána törölhető.`, 'Rendben', false, 'Vissza'); return }
+  if (v.kind === 'last') { ui.toast('Legalább egy aktív rendelőnek maradnia kell.'); return }
+  if (v.kind === 'inactivate') {
+    if (await ui.confirm(`A(z) <b>${esc(r.name)}</b> nem törölhető, mert múltbeli adat kapcsolódik hozzá (${v.reasons.map(esc).join('; ')}). Inaktiválod? Az alaprajzról és a rendelőválasztókból eltűnik, a múltbeli adatokban megmarad.`, 'Inaktiválás', true, 'Mégse')) { setRoomActive(db.value, id, false); ui.toast(`${r.name} inaktiválva`) }
+    return
+  }
+  if (await ui.confirm(`Biztosan törli a(z) <b>${esc(r.name)}</b> rendelőt?`, 'Törlés', true, 'Mégse')) { deleteRoom(db.value, id); ui.toast(`${r.name} törölve`) }
+}
+function reactivateRoom(id: string) { setRoomActive(db.value, id, true); ui.toast('A rendelő újra aktív') }
+async function removeWaiting(i: number) {
+  const w = staff.value.waiting[i]; if (!w) return
+  if (await ui.confirm(`Biztosan törli a(z) <b>${esc(w.name)}</b> helyiséget?`, 'Törlés', true, 'Mégse')) staff.value.waiting.splice(i, 1)
+}
 
 /* ---------- asszisztens napi beosztása ---------- */
 const asDay = computed(() => assistantsOn(db.value, date.value))
@@ -88,10 +111,9 @@ const gaps = computed(() => receptionGaps(db.value, date.value))
 const recToday = computed(() => staff.value.receptionists.filter(r => r.active).map(r => ({ r, p: periodsOn(db.value, 'reception', r.id, date.value) })).filter(x => x.p.length))
 
 /* ---------- alaprajz ---------- */
-const rooms = computed(() => db.value.rooms)
+const rooms = computed(() => activeRooms(db.value))
+const inactiveRooms = computed(() => db.value.rooms.filter(r => r.active === false))
 const roomDocs = (roomId: string) => db.value.doctors.filter(d => d.active !== false && d.roomId === roomId).map(d => ({ d, p: periodsOn(db.value, 'doctor', d.id, date.value), as: docAsToday(d.id).map(x => asName(x.assistantId)) }))
-const W = 760
-const roomW = computed(() => Math.max(180, Math.floor((W - 40 - 220) / Math.max(1, rooms.value.length))))
 </script>
 
 <template>
@@ -106,56 +128,60 @@ const roomW = computed(() => Math.max(180, Math.floor((W - 40 - 220) / Math.max(
 
     <!-- alaprajz -->
     <template v-if="part === 'plan'">
-      <div class="floor">
-        <svg :viewBox="`0 0 ${W} 330`" role="img" aria-label="A rendelő felülnézeti képe (minta)">
-          <rect x="4" y="4" :width="W - 8" height="322" rx="14" fill="#fbfaf7" stroke="#d9d4c7" stroke-width="2" />
-          <g v-for="(r, i) in rooms" :key="r.id" :transform="`translate(${16 + i * (roomW + 10)},16)`">
-            <rect :width="roomW" height="190" rx="10" :fill="pastel(i)" fill-opacity=".35" :stroke="pastel(i)" stroke-width="2" />
-            <text x="10" y="20" font-size="13" font-weight="800" fill="#3d4a57">{{ r.name }}</text>
-            <!-- íróasztal számítógéppel -->
-            <rect x="10" y="32" width="70" height="28" rx="4" fill="#e8dcc6" stroke="#b9a988" /><rect x="30" y="36" width="30" height="16" rx="2" fill="#6b7a89" /><rect x="40" y="52" width="10" height="4" fill="#6b7a89" />
-            <text x="12" y="72" font-size="9" fill="#6b7a89">íróasztal, számítógép</text>
-            <!-- fogorvosi szék -->
-            <path :d="`M ${roomW / 2 - 12} 90 q 0 -14 14 -14 h 22 q 10 0 10 10 v 36 q 0 8 -8 8 h -30 q -8 0 -8 -8 z`" fill="#cfe7f7" stroke="#6aa6cf" stroke-width="1.5" />
-            <text :x="roomW / 2 - 20" y="146" font-size="9" fill="#3a6a8c">fogorvosi szék</text>
-            <!-- röntgengép -->
-            <circle :cx="roomW / 2 + 52" cy="86" r="9" fill="#f2e6f7" stroke="#a07cc0" /><line :x1="roomW / 2 + 52" y1="95" :x2="roomW / 2 + 52" y2="118" stroke="#a07cc0" stroke-width="3" />
-            <text :x="roomW / 2 + 34" y="130" font-size="9" fill="#7a5698">röntgen</text>
-            <g v-for="(x, k) in roomDocs(r.id)" :key="x.d.id" :transform="`translate(8,${154 + k * 16})`">
-              <rect width="10" height="10" rx="2" :fill="x.d.color" /><text x="14" y="9" font-size="10.5" fill="#23313f"><tspan font-weight="700">{{ x.d.name }}</tspan> · {{ periodsText(x.p) }}{{ x.as.length ? ' · ' + x.as.join(', ') : '' }}</text>
-            </g>
-          </g>
-          <!-- recepció -->
-          <g :transform="`translate(${W - 214},16)`">
-            <rect width="200" height="100" rx="10" fill="#ffd59e" fill-opacity=".45" stroke="#f0b45e" stroke-width="2" />
-            <text x="10" y="20" font-size="13" font-weight="800" fill="#6a4a10">Recepciós pult</text>
-            <path d="M 20 40 h 120 q 10 0 10 10 v 14 h -130 z" fill="#f3d6a6" stroke="#c99b50" />
-            <text v-for="(x, k) in recToday" :key="x.r.id" x="10" :y="82 + k * 13" font-size="10.5" fill="#3d2f10">{{ x.r.name }} · {{ periodsText(x.p) }}</text>
-            <text v-if="!recToday.length" x="10" y="84" font-size="10.5" fill="#a1241a">nincs recepciós</text>
-          </g>
-          <!-- váróterem -->
-          <g :transform="`translate(${W - 214},126)`">
-            <rect width="200" height="80" rx="10" fill="#a8e3dd" fill-opacity=".4" stroke="#5fc0b5" stroke-width="2" />
-            <text x="10" y="20" font-size="13" font-weight="800" fill="#1d5c55">Váróterem</text>
-            <text v-for="(w, k) in staff.waiting" :key="w.id" x="10" :y="38 + k * 13" font-size="10.5" fill="#1d5c55">{{ w.name }}</text>
-            <g v-for="k in 6" :key="'s' + k"><rect :x="100 + ((k - 1) % 3) * 30" :y="32 + Math.floor((k - 1) / 3) * 22" width="20" height="14" rx="3" fill="#d9f3ef" stroke="#5fc0b5" /></g>
-          </g>
-          <text x="16" y="230" font-size="11" fill="#6b7a89">{{ DAYS[dow(date) - 1] }}, {{ fmtShort(date) }} – minta alaprajz (Cooldent Kft.); az egyedi, valósághű alaprajz egy későbbi verzióban, jogosultsághoz kötve készíthető.</text>
-          <text v-if="gaps.length" x="16" y="248" font-size="11" fill="#a1241a">Nincs recepciós: {{ periodsText(gaps) }}</text>
-          <text v-if="clashes.length" x="16" y="266" font-size="11" fill="#a1241a">⚠ Egy asszisztens egyszerre két helyen: {{ clashes.map(asName).join(', ') }}</text>
-        </svg>
+      <!-- v2.5 5. pont (B-015): az alaprajz rács – egyforma cellák, egyenletes térköz, soronként asztali gépen legfeljebb 3, táblagépen 2,
+           telefonon 1 rendelő; a recepció és a váróterem asztali gépen jobbra külön oszlopban, keskeny képernyőn a rendelők alatt.
+           Tetszőleges számú rendelőnél sincs átfedés, a keret a tartalommal nő, a feliratok a szobán belül törnek. -->
+      <div class="fp" role="img" aria-label="A rendelő felülnézeti képe (minta)" data-test="alaprajz">
+        <div class="fp-rooms">
+          <div v-for="(r, i) in rooms" :key="r.id" class="fp-cell fp-room" :style="`--c:${pastel(i)}`" data-test="alaprajz-rendelo">
+            <div class="fp-name">{{ r.name }}</div>
+            <svg class="fp-art" viewBox="0 0 200 104" aria-hidden="true">
+              <!-- íróasztal számítógéppel -->
+              <rect x="6" y="6" width="70" height="28" rx="4" fill="#e8dcc6" stroke="#b9a988" /><rect x="26" y="10" width="30" height="16" rx="2" fill="#6b7a89" /><rect x="36" y="26" width="10" height="4" fill="#6b7a89" />
+              <text x="8" y="48" font-size="9" fill="#6b7a89">íróasztal, számítógép</text>
+              <!-- fogorvosi szék -->
+              <path d="M 104 50 q 0 -14 14 -14 h 22 q 10 0 10 10 v 22 q 0 8 -8 8 h -30 q -8 0 -8 -8 z" fill="#cfe7f7" stroke="#6aa6cf" stroke-width="1.5" />
+              <text x="100" y="92" font-size="9" fill="#3a6a8c">fogorvosi szék</text>
+              <!-- röntgengép -->
+              <circle cx="182" cy="18" r="9" fill="#f2e6f7" stroke="#a07cc0" /><line x1="182" y1="27" x2="182" y2="50" stroke="#a07cc0" stroke-width="3" />
+              <text x="164" y="64" font-size="9" fill="#7a5698">röntgen</text>
+            </svg>
+            <div v-for="x in roomDocs(r.id)" :key="x.d.id" class="fp-doc"><i :style="`background:${x.d.color}`" /><span><b>{{ x.d.name }}</b> · {{ periodsText(x.p) }}<template v-if="x.as.length"> · {{ x.as.join(', ') }}</template></span></div>
+            <div v-if="!roomDocs(r.id).length" class="fp-doc muted">nincs hozzárendelt orvos</div>
+          </div>
+        </div>
+        <div class="fp-side">
+          <div class="fp-cell fp-rec" data-test="alaprajz-recepcio">
+            <div class="fp-name">Recepciós pult</div>
+            <svg class="fp-art sm" viewBox="0 0 160 30" aria-hidden="true"><path d="M 10 4 h 120 q 10 0 10 10 v 14 h -130 z" fill="#f3d6a6" stroke="#c99b50" /></svg>
+            <div v-for="x in recToday" :key="x.r.id" class="fp-doc"><span>{{ x.r.name }} · {{ periodsText(x.p) }}</span></div>
+            <div v-if="!recToday.length" class="fp-doc" style="color:#a1241a">nincs recepciós</div>
+          </div>
+          <div class="fp-cell fp-wait" data-test="alaprajz-varo">
+            <div class="fp-name">Váróterem</div>
+            <div class="fp-seats" aria-hidden="true"><i v-for="k in 6" :key="k" /></div>
+            <div v-for="w in staff.waiting" :key="w.id" class="fp-doc"><span>{{ w.name }}</span></div>
+          </div>
+        </div>
       </div>
+      <div class="small muted" style="margin-top:6px">{{ DAYS[dow(date) - 1] }}, {{ fmtShort(date) }} – minta alaprajz (Cooldent Kft.); az egyedi, valósághű alaprajz egy későbbi verzióban, jogosultsághoz kötve készíthető.</div>
+      <div v-if="gaps.length" class="small" style="color:#a1241a">Nincs recepciós: {{ periodsText(gaps) }}</div>
+      <div v-if="clashes.length" class="small" style="color:#a1241a">⚠ Egy asszisztens egyszerre két helyen: {{ clashes.map(asName).join(', ') }}</div>
       <div class="grid2" style="margin-top:10px">
         <div>
           <label class="f">Rendelőszobák</label>
-          <div v-for="r in rooms" :key="r.id" class="row" style="padding:2px 0"><input v-model.lazy="r.name" class="inp" style="max-width:240px"></div>
-          <button class="btn sm" @click="addRoom">+ Rendelőszoba</button>
+          <div v-for="r in rooms" :key="r.id" class="row" style="padding:2px 0" data-test="rendelo-sor"><input v-model.lazy="r.name" class="inp" style="max-width:240px" :aria-label="'Rendelő neve: ' + r.name"><button class="btn sm danger" type="button" :data-test="'rendelo-torles'" @click="removeRoom(r.id)">Törlés</button></div>
+          <button class="btn sm" data-test="rendelo-uj" @click="addRoom">+ Rendelőszoba</button>
+          <div v-if="inactiveRooms.length" style="margin-top:8px">
+            <div class="small muted">Inaktív rendelők (a múltbeli adatokban megmaradnak):</div>
+            <div v-for="r in inactiveRooms" :key="r.id" class="row small" style="padding:2px 0;opacity:.7" data-test="rendelo-inaktiv"><span>{{ r.name }}</span><span class="badge b-gray">inaktív</span><button class="btn sm" type="button" @click="reactivateRoom(r.id)">Újraaktiválás</button></div>
+          </div>
         </div>
         <div>
           <label class="f">Várótermek (szám vagy név)</label>
-          <div v-for="(w, i) in staff.waiting" :key="w.id" class="row" style="padding:2px 0"><input v-model.lazy="w.name" class="inp" style="max-width:240px"><button class="btn sm" @click="staff.waiting.splice(i, 1)">×</button></div>
+          <div v-for="(w, i) in staff.waiting" :key="w.id" class="row" style="padding:2px 0"><input v-model.lazy="w.name" class="inp" style="max-width:240px"><button class="btn sm danger" type="button" @click="removeWaiting(i)">Törlés</button></div>
           <button class="btn sm" @click="addWaiting">+ Váróterem</button>
-          <div class="small muted" style="margin-top:4px">A v2.4-ben csak megnevezés és megjelenítés; a páciens váróteremhez rendelése, a behívás és a tévéképernyős megjelenítés későbbi modul.</div>
+          <div class="small muted" style="margin-top:4px">Csak megnevezés és megjelenítés; a páciens váróteremhez rendelése, a behívás és a tévéképernyős megjelenítés későbbi modul.</div>
         </div>
       </div>
     </template>
@@ -166,7 +192,7 @@ const roomW = computed(() => Math.max(180, Math.floor((W - 40 - 220) / Math.max(
         <div class="row">
           <input v-model.lazy="d.name" class="inp" style="max-width:220px;font-weight:700" aria-label="Orvos neve">
           <input v-model="d.color" type="color" class="inp" style="width:48px;padding:2px;height:34px" aria-label="Szín a naptárban">
-          <select v-model="d.roomId" class="inp auto" aria-label="Rendelő"><option v-for="r in db.rooms" :key="r.id" :value="r.id">{{ r.name }}</option></select>
+          <select v-model="d.roomId" class="inp auto" aria-label="Rendelő"><option v-for="r in db.rooms.filter(x => x.active !== false || x.id === d.roomId)" :key="r.id" :value="r.id">{{ r.name }}</option></select>
           <label class="switch" :class="{ on: d.active !== false }" @click.prevent="d.active = d.active === false"><i />{{ d.active === false ? 'inaktív' : 'aktív' }}</label>
           <div class="spacer" /><button class="btn sm danger" @click="delDoctor(d.id)">Törlés</button>
         </div>
@@ -238,3 +264,31 @@ const roomW = computed(() => Math.max(180, Math.floor((W - 40 - 220) / Math.max(
     </div>
   </div>
 </template>
+
+<style scoped>
+/* v2.5 5. pont (B-015): rács-alaprajz – asztali gépen 3 rendelő / sor + jobb oldali oszlop, táblagépen 2, telefonon 1 */
+.fp { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 12px; background: #fbfaf7; border: 2px solid #d9d4c7; border-radius: 14px; padding: 12px; max-width: 100%; box-sizing: border-box }
+.fp-rooms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-content: start }
+.fp-side { display: grid; grid-template-columns: 1fr; gap: 12px; align-content: start }
+.fp-cell { border-radius: 10px; padding: 10px; min-width: 0; overflow-wrap: anywhere; word-break: normal; box-sizing: border-box }
+.fp-room { background: color-mix(in srgb, var(--c) 35%, white); border: 2px solid var(--c) }
+.fp-rec { background: #ffeccd; border: 2px solid #f0b45e }
+.fp-wait { background: #d9f3ef; border: 2px solid #5fc0b5 }
+.fp-name { font-weight: 800; font-size: 14px; color: #3d4a57; margin-bottom: 4px }
+.fp-art { display: block; width: 100%; max-width: 260px; height: auto; margin: 2px 0 6px }
+.fp-art.sm { max-width: 170px }
+.fp-doc { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; line-height: 1.4; color: #23313f; margin-top: 3px; min-width: 0 }
+.fp-doc > i { flex: 0 0 10px; width: 10px; height: 10px; border-radius: 2px; margin-top: 3px }
+.fp-doc > span { min-width: 0 }
+.fp-seats { display: grid; grid-template-columns: repeat(3, 20px); gap: 6px; margin: 4px 0 6px }
+.fp-seats i { display: block; width: 20px; height: 14px; border-radius: 3px; background: #f1fbf9; border: 1px solid #5fc0b5 }
+@media (max-width: 1023px) {
+  .fp { grid-template-columns: minmax(0, 1fr) }
+  .fp-rooms { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .fp-side { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+}
+@media (max-width: 599px) {
+  .fp { padding: 8px; gap: 8px }
+  .fp-rooms, .fp-side { grid-template-columns: minmax(0, 1fr); gap: 8px }
+}
+</style>

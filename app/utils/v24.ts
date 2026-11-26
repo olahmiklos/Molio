@@ -13,17 +13,19 @@ import { DURS } from './v22'
 
 /** a régebbi (v2.3) böngészős adatok kiegészítése a v2.4 mezőivel – adatvesztés nélkül, minden betöltéskor lefut */
 export function ensureV24(db: DB): DB {
+  // v2.5 3. pont: a 2. minta-rendelő csak az első (v2.4-es) kiegészítéskor kerül be – a törölt rendelő újratöltés után nem jön vissza
+  const firstRun = !db.schedule
   db.staff = db.staff || defaultStaff()
   db.staff.waiting = db.staff.waiting || []
   db.schedule = db.schedule || emptySchedule()
   const s = db.schedule
   s.doctor = s.doctor || {}; s.reception = s.reception || {}; s.overrides = s.overrides || []; s.assistantDays = s.assistantDays || []; s.overrideLog = s.overrideLog || []
   const site = db.sites[0]?.id || 'site-1'
-  if (!db.rooms.some(r => r.id === 'room-2') && db.doctors.length > 1) db.rooms.push({ id: 'room-2', siteId: site, name: '2. rendelő' })
+  if (firstRun && !db.rooms.some(r => r.id === 'room-2') && db.doctors.length > 1) db.rooms.push({ id: 'room-2', siteId: site, name: '2. rendelő' })
   const asz = db.staff.assistants
   db.doctors.forEach((d, i) => {
     if (!d.color) d.color = DOC_COLORS[i % DOC_COLORS.length]
-    if (!d.roomId) d.roomId = db.rooms[Math.min(i, db.rooms.length - 1)]?.id
+    if (firstRun && !d.roomId) d.roomId = db.rooms[Math.min(i, db.rooms.length - 1)]?.id
     if (!d.assistantIds) d.assistantIds = asz[i] ? [asz[i]!.id] : []
     if (d.active === undefined) d.active = true
   })

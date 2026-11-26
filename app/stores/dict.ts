@@ -9,6 +9,7 @@ import type { PromptStyle } from '~/utils/dict/prompt'
 import type { ResampleMode } from '~/utils/dict/audio'
 import type { Macro } from '~/utils/dict/macro'
 import { looksPersonal } from '~/utils/dict/learn'
+import { differs, safePhrase, sameTarget, type InterpRule } from '~/utils/dict/interp'
 
 export type Recognizer = 'whisper' | 'browser'
 export interface DictPrefs {
@@ -50,7 +51,9 @@ const defaults = () => ({
   combos: [] as { sig: string; at: string }[],
   dismissedCombos: [] as string[],
   /** v2.4 6. pont: a központi mentésre váró tanult javítások / rövidítések, és a központból utoljára letöltött állapot ideje */
-  learnQueue: [] as { kind: 'rule' | 'macro'; data: unknown }[],
+  learnQueue: [] as { kind: 'rule' | 'macro' | 'interp'; data: unknown }[],
+  /** v2.5 4. pont: értelmezési szabályok („kifejezés → tétel / anyag / fogszám / mennyiség”), a rendelő minden felhasználójára */
+  interp: [] as InterpRule[],
   learnSyncedAt: '',
   personal: [] as PersonalRule[],
   qtyRules: [] as QtyRule[],
@@ -121,10 +124,29 @@ export const useDictStore = defineStore('dict', () => {
     const r = addPersonal(f, t, o.source || 'javitas', s.prefs.recognizer)
     if (!r) return null
     Object.assign(r, { scope: o.scope, cat: o.cat, branch: BRANCH_TAG(), uses: r.uses || 0, applied: r.applied || 0 })
+    // v2.5 4. pont 6.: a központi mentés kötegelve, a diktálás mentésekor történik (syncLearn a kezelés jóváhagyásakor fut)
     s.learnQueue.push({ kind: 'rule', data: { from: r.from, to: r.to, scope: o.scope, cat: o.cat, at: new Date().toISOString() } })
-    void syncLearn()
     return { rule: r, conflict }
   }
+  /** v2.5 4. pont 1–3.: értelmezési szabály a kézi javításból – külön jóváhagyás nélkül, a következő diktálástól érvényes.
+   * Ugyanarra a kifejezésre és célra ellentmondó javításnál a legutóbbi érvényes, és a hívó jelzi az ütközést. */
+  function learnInterp(x: Omit<InterpRule, 'id' | 'active' | 'created' | 'source' | 'scope' | 'branch' | 'uses' | 'corrected'>): { rule: InterpRule; conflict: string | null } | null {
+    if (!safePhrase(x.phrase)) return null
+    const ex = s.interp.find(r => sameTarget(r, x))
+    if (ex) {
+      const conflict = differs(ex, x) ? ex.to : null
+      Object.assign(ex, x, { active: true, created: new Date().toISOString() })
+      s.learnQueue.push({ kind: 'interp', data: pick(ex) })
+      return { rule: ex, conflict }
+    }
+    const r: InterpRule = { ...x, id: 'i' + Math.random().toString(36).slice(2, 9), active: true, created: new Date().toISOString(), source: 'javitas', scope: 'rendelo', branch: BRANCH_TAG(), uses: 0, corrected: 0 }
+    s.interp.push(r)
+    s.learnQueue.push({ kind: 'interp', data: pick(r) })
+    return { rule: r, conflict: null }
+  }
+  /** a központba csak a szabály maga megy (kifejezés, kategória, cél) – mondat és hang nem */
+  const pick = (r: InterpRule) => ({ phrase: r.phrase, cat: r.cat, item: r.item, qty: r.qty, fromTooth: r.fromTooth, tooth: r.tooth, typeId: r.typeId, from: r.from, to: r.to, at: new Date().toISOString() })
+  const removeInterp = (id: string) => { s.interp = s.interp.filter(r => r.id !== id) }
   let syncing = false
   /** a központi mentés kötegben (egy írás); hálózati hiba esetén az eszközön várakozik */
   async function syncLearn() {
@@ -132,7 +154,7 @@ export const useDictStore = defineStore('dict', () => {
     syncing = true
     const batch = s.learnQueue.slice(0, 60)
     try {
-      const r = await fetch('/api/diktalas/tanult-javitas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: s.deviceId, speaker: 'demo', rules: batch.filter(b => b.kind === 'rule').map(b => b.data), macros: batch.filter(b => b.kind === 'macro').map(b => b.data) }) })
+      const r = await fetch('/api/diktalas/tanult-javitas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: s.deviceId, speaker: 'demo', rules: batch.filter(b => b.kind === 'rule').map(b => b.data), macros: batch.filter(b => b.kind === 'macro').map(b => b.data), interp: batch.filter(b => b.kind === 'interp').map(b => b.data) }) })
       if (r.ok) { const j = await r.json().catch(() => ({})) as { stored?: boolean }; if (j.stored !== false) s.learnQueue.splice(0, batch.length) }
     } catch { /* később újra */ } finally { syncing = false }
   }
@@ -142,11 +164,16 @@ export const useDictStore = defineStore('dict', () => {
     if (!force && s.learnSyncedAt && Date.now() - Date.parse(s.learnSyncedAt) < 6 * 3600000) return null
     try {
       const r = await fetch('/api/diktalas/tanult-javitas'); if (!r.ok) return null
-      const j = await r.json() as { batches?: { branch: string; rules?: { from: string; to: string; scope?: string; cat?: string }[]; macros?: Macro[] }[] }
+      const j = await r.json() as { batches?: { branch: string; rules?: { from: string; to: string; scope?: string; cat?: string }[]; macros?: Macro[]; interp?: Partial<InterpRule>[] }[] }
       let n = 0
       ;(j.batches || []).forEach(b => {
         ;(b.rules || []).forEach(x => { if (x?.from && x?.to && !s.personal.some(p => p.from.toLowerCase() === x.from.toLowerCase())) { const p = addPersonal(x.from, x.to, 'kozponti'); if (p) { Object.assign(p, { scope: x.scope || 'rendelo', cat: x.cat || 'egyéb', branch: b.branch }); n++ } } })
         ;(b.macros || []).forEach(m => { if (m?.id && m.name && !s.macros.some(x => x.id === m.id)) { s.macros.push({ ...m, branch: b.branch }); n++ } })
+        // v2.5 4. pont 6.: az értelmezési szabályok is (a main ágon tanultak a teszt ágon is érvényesek, fordítva nem – a Worker szerint)
+        ;(b.interp || []).forEach(x => {
+          if (!x?.phrase || !x.cat || !safePhrase(x.phrase) || s.interp.some(r => sameTarget(r, x as InterpRule))) return
+          s.interp.push({ id: 'i' + Math.random().toString(36).slice(2, 9), phrase: x.phrase, cat: x.cat, item: x.item, qty: x.qty, fromTooth: x.fromTooth, tooth: x.tooth, typeId: x.typeId, from: x.from || x.phrase, to: x.to || '', active: true, created: new Date().toISOString(), source: 'kozponti', scope: 'rendelo', branch: b.branch, uses: 0, corrected: 0 }); n++
+        })
       })
       s.learnSyncedAt = new Date().toISOString()
       return { n, raw: j }
@@ -229,5 +256,5 @@ export const useDictStore = defineStore('dict', () => {
     s.remindN++
     return s.remindN === 1 || s.remindN % 5 === 0
   }
-  return { s, ready, aiInfo, init, eff, learn, syncLearn, pullLearn, trained, lastTrain, activePersonal, filterList, addPersonal, removePersonal, noteUnknown, dropUnknown, addLog, flush, suggestions, acceptSuggestion, dismissSuggestion, rates, addTraining, shouldOffer }
+  return { s, ready, aiInfo, init, eff, learn, learnInterp, removeInterp, syncLearn, pullLearn, trained, lastTrain, activePersonal, filterList, addPersonal, removePersonal, noteUnknown, dropUnknown, addLog, flush, suggestions, acceptSuggestion, dismissSuggestion, rates, addTraining, shouldOffer }
 })

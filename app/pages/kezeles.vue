@@ -208,7 +208,7 @@ const stLabel = (st: string[]) => st.map(x => STATUS_STYLE[x]?.label || x).join(
       </div>
     </div>
     <div v-if="DEV_TOOLS" class="ai-note">
-      <b>Demó v2.4 (teszt):</b> a diktálást a <b>Whisper</b> hangfelismerő alakítja szöveggé a Cloudflare szerverén (rövid mondatos szakszó-szöveggel); a böngésző felismerője a háttérben fut – ha a Whisper szövege értelmetlen vagy nem érhető el, magától erre vált. A mezőket szabályok töltik ki, az AI-értelmezés alapból bekapcsolt.
+      <b>Demó v2.5 (teszt):</b> a diktálást a <b>Whisper</b> hangfelismerő alakítja szöveggé a Cloudflare szerverén (rövid mondatos szakszó-szöveggel); a böngésző felismerője a háttérben fut – ha a Whisper szövege értelmetlen vagy nem érhető el, magától erre vált. A mezőket szabályok töltik ki, az AI-értelmezés alapból bekapcsolt.
       Egy felvétel legfeljebb {{ DICTATION_LIMIT_S }} másodperc lehet. A hang nem tárolódik; az élő előnézethez a böngésző szolgáltatója (Apple / Google) is kaphatja. Csak kitalált adatot diktálj.
       <span v-if="!voice.supported"><br><b>Ez a böngésző nem támogatja a diktálást</b> – gépeld be a szöveget (Chrome, Edge vagy Safari ajánlott).</span>
     </div>

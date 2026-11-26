@@ -4,7 +4,7 @@
 //   POST /api/diktalas/ertelmezes    – szöveg → strukturált tételek (Workers AI nyelvi modell), csak a Molio kódkészleteiből választva
 //   POST /api/diktalas/naplo         – anonimizált javítási napló központi gyűjtése (Cloudflare KV, ha be van kötve)
 //   GET  /api/diktalas/keret         – a napi ingyenes AI-keret becsült állapota
-//   POST /api/diktalas/tanult-javitas – v2.4 6., 15. pont: tanult javítások és rövidítések központi mentése ágak szerint (egy kötegben egy írás)
+//   POST /api/diktalas/tanult-javitas – v2.4 6., 15. pont, v2.5 4. pont: tanult (szó- és értelmezési) javítások és rövidítések központi mentése ágak szerint (egy kötegben egy írás)
 //   GET  /api/diktalas/tanult-javitas – a main ágon a main ág bejegyzései; a teszt ágon a main és a teszt ágé (export is)
 //   POST /api/diktalas/proba          – v2.4 12. pont E): próbanapló (csak a teszt ágon; hang nélkül; 90 napig)
 //   GET  /api/diktalas/proba          – a próbanapló olvasása (csak a teszt ágon)
@@ -12,6 +12,7 @@
 //   GET  /api/latogatas               – a látogatás-napló olvasása (CSAK a teszt ágon – a main gazdagépen nincs olvasó végpont)
 //   DELETE /api/latogatas             – a napló törlése (csak a teszt ágon)
 //   POST /api/latogatas/nev           – IP-címhez rövid név / „saját” jelölés (csak a teszt ágon)
+//   GET  /_nuxt/builds/latest.json   – v2.5 1. pont (B-008): mindig 404, gyorsítótárazás nélkül (a régi nyitott oldalak Nuxt-figyelője ne töltsön újra csendben)
 // A hangot a Worker nem tárolja, csak továbbítja. Titkot / API-kulcsot nem használ (AI binding).
 // KV-keret (ingyenes csomag: kb. 1000 írás / nap): minden KV-művelet hibatűrő (try/catch) – a keret kimerülése nem állíthatja le a diktálást.
 
@@ -45,6 +46,9 @@ const KEEP_90 = 90 * DAY_S
 const memCount = new Map<string, number>()
 let memQuota = { day: '', used: 0 }
 
+/** v2.5 1. pont (B-008): a Nuxt elavult-build figyelőjének fájlja – a Worker mindig 404-et ad rá, gyorsítótárazás nélkül */
+export const OUTDATED_BUILD_PATH = '/_nuxt/builds/latest.json'
+export const outdatedBuild404 = () => new Response('', { status: 404, headers: { 'cache-control': 'no-store, max-age=0', 'cdn-cache-control': 'no-store' } })
 const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 const day = () => new Date().toISOString().slice(0, 10)
 
@@ -189,13 +193,14 @@ async function logEntries(req: Request, env: Env): Promise<Response> {
 
 /* ---------- v2.4 6., 15. pont: tanult javítások és rövidítések (ágak szerint) ---------- */
 async function learnSave(req: Request, env: Env, host: string): Promise<Response> {
-  let body: { device?: string; speaker?: string; rules?: unknown[]; macros?: unknown[] }
+  let body: { device?: string; speaker?: string; rules?: unknown[]; macros?: unknown[]; interp?: unknown[] }
   try { body = await req.json() } catch { return json({ ok: false }, 400) }
   if (!env.MOLIO_LOG) return json({ ok: true, stored: false }, 202)
   const br = branchOf(host)
-  const rules = Array.isArray(body.rules) ? body.rules.slice(0, 100) : [], macros = Array.isArray(body.macros) ? body.macros.slice(0, 50) : []
-  if (!rules.length && !macros.length) return json({ ok: true, stored: false, n: 0 })
-  const ok = await kvPut(env, `learn:${br}:${new Date().toISOString()}:${crypto.randomUUID().slice(0, 8)}`, JSON.stringify({ branch: br, device: String(body.device || '').slice(0, 24), speaker: String(body.speaker || 'demo').slice(0, 40), at: new Date().toISOString(), rules, macros }))
+  // v2.5 4. pont 6.: az értelmezési szabályok is (kifejezés → tétel / anyag / fogszám / mennyiség); egy köteg = egy KV-írás
+  const rules = Array.isArray(body.rules) ? body.rules.slice(0, 100) : [], macros = Array.isArray(body.macros) ? body.macros.slice(0, 50) : [], interp = Array.isArray(body.interp) ? body.interp.slice(0, 100) : []
+  if (!rules.length && !macros.length && !interp.length) return json({ ok: true, stored: false, n: 0 })
+  const ok = await kvPut(env, `learn:${br}:${new Date().toISOString()}:${crypto.randomUUID().slice(0, 8)}`, JSON.stringify({ branch: br, device: String(body.device || '').slice(0, 24), speaker: String(body.speaker || 'demo').slice(0, 40), at: new Date().toISOString(), rules, macros, interp }))
   return json({ ok: true, stored: ok, branch: br }, ok ? 200 : 202)
 }
 async function learnGet(env: Env, host: string): Promise<Response> {
@@ -269,6 +274,7 @@ async function visitName(req: Request, env: Env): Promise<Response> {
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url)
+    if (url.pathname === OUTDATED_BUILD_PATH) return outdatedBuild404()
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req)
     if (!sameOrigin(req)) return json({ ok: false, error: 'tiltott eredet' }, 403)
     const host = url.host, test = isTestHost(host)

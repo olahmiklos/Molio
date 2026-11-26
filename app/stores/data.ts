@@ -7,6 +7,7 @@ import { DB_VERSION, seed } from '~/utils/seed'
 import { migrate } from '~/utils/migrate'
 import { setSynonyms } from '~/utils/codesets'
 import { ensureV24 } from '~/utils/v24'
+import { ensureV25 } from '~/utils/v25'
 
 export const useDataStore = defineStore('data', () => {
   const db = ref<DB>(null as unknown as DB)
@@ -24,7 +25,7 @@ export const useDataStore = defineStore('data', () => {
       await repo.save(loaded)
     }
     // v2.4: a beosztás, a személyzet és a tájékoztató-jóváhagyás mezőinek pótlása (adatvesztés nélkül)
-    ensureV24(loaded)
+    ensureV25(ensureV24(loaded))
     setSynonyms(loaded.settings.synonyms)
     db.value = loaded
     ready.value = true
@@ -41,7 +42,7 @@ export const useDataStore = defineStore('data', () => {
     const repo = useRepository()
     stopWatch?.()
     await repo.reset()
-    const fresh = ensureV24(seed())
+    const fresh = ensureV25(ensureV24(seed()))
     await repo.save(fresh)
     db.value = fresh
     setSynonyms(fresh.settings.synonyms)

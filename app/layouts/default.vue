@@ -9,6 +9,7 @@ import { useRepository } from '~/repositories'
 import { BUILD_DATE_HU, SPEC, VERSION_BADGE, VERSION_LINE, buildInfo } from '~/utils/meta'
 import { logVisit } from '~/utils/visit'
 import { todoAlerts } from '~/utils/v24'
+import { checkForUpdate } from '~/utils/updates'
 
 const data = useDataStore()
 const ui = useUiStore()
@@ -29,7 +30,7 @@ const nav = [
   { to: '/beallitasok', label: 'Beállítások', short: 'Beáll.', icon: 'gear', match: (p: string) => p.startsWith('/beallitasok') || p.startsWith('/nevjegy') || p.startsWith('/sugo') },
 ]
 
-// PWA: új verzió esetén a program magától frissít, hogy senki ne ragadjon egy régi verzióban.
+// PWA: új verzió esetén a teszt ágon a program magától frissít, hogy senki ne ragadjon egy régi verzióban; a main ágon a felugró ablak jelzi (v2.3 6. pont, v2.5 1. pont).
 // Ha éppen folyamatban lévő kezelés vagy nyitott ablak van, megvárja a végét (addig a sáv kínálja a kézi újratöltést).
 const { $pwa } = useNuxtApp() as any
 const busy = computed(() => tx.active || ui.modals.length > 0 || !!ui.confirmState)
@@ -50,6 +51,11 @@ function tryAutoUpdate() {
   applyUpdate()
 }
 watch(() => $pwa?.needRefresh, tryAutoUpdate, { immediate: true })
+// v2.5 1. pont 4. (B-008): hiányzó régi programfájlnál (régi build chunkja már nincs a szerveren) sincs csendes újratöltés navigáció közben –
+// a Nuxt automatikus chunk-reload bővítménye ki van kapcsolva (emitRouteChunkError: 'manual'); helyette a felugró ablak jelenik meg,
+// és az OK előtt a folyamatban lévő munka piszkozatba kerül (minden ágon, mert ilyenkor a program nem tud tovább dolgozni).
+const nuxtApp = useNuxtApp()
+nuxtApp.hook('app:chunkError', () => { showUpdate.value = true })
 watch(busy, b => { if (!b && !isMain) tryAutoUpdate() })
 /** OK: a folyamatban lévő diktálás / szerkesztés piszkozatba kerül, majd az új verzió aktiválódik és az oldal újratöltődik */
 async function confirmUpdate() {
@@ -82,12 +88,14 @@ onMounted(() => {
   // v2.4 20. pont: látogatás naplózása (látogatásonként egyszer; a hiba nem zavar más funkciót)
   void logVisit()
   // a main ágon 4 óránként háttér-ellenőrzés a nyitott oldalon (előtérbe kerüléskor és betöltéskor is)
-  if (isMain) setInterval(() => navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => {}), 4 * 3600 * 1000)
+  // v2.5 1. pont: betöltéskor is ellenőriz (az időpont a teszt ági fejlesztői részletekben látszik)
+  void checkForUpdate()
+  if (isMain) setInterval(() => { void checkForUpdate() }, 4 * 3600 * 1000)
   const set = () => { ui.online = navigator.onLine }
   set(); window.addEventListener('online', set); window.addEventListener('offline', set)
   // előtérbe kerüléskor azonnal keres új verziót (telefonon, tableten a háttérből visszatérve)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => {})
+    if (document.visibilityState === 'visible') void checkForUpdate()
   })
   window.addEventListener('keydown', e => { if (e.key === 'Escape') { if (ui.confirmState) ui.answer(false); else ui.close() } })
 })

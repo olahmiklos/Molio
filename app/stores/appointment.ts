@@ -31,7 +31,8 @@ export const useAppointmentStore = defineStore('appointment', () => {
   function openDay(d: string) { calDate.value = d; calMode.value = 'day' }
 
   function create(a: Omit<Appointment, 'id' | 'created' | 'roomId'>) {
-    const na: Appointment = { ...a, id: uid(), created: today(), roomId: ROOM_ID }
+    // v2.5 3. pont: az időpont a kezelő orvos rendelőjét kapja (ha nincs, az alap rendelőt)
+    const na: Appointment = { ...a, id: uid(), created: today(), roomId: db.value.doctors.find(d => d.id === a.doctorId)?.roomId || ROOM_ID }
     db.value.appointments.push(na)
     return na
   }

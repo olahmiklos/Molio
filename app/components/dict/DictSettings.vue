@@ -22,6 +22,9 @@ const ctx = computed(() => ({ types: data.db.types, items: data.db.items }))
 const lineTxt = (m: Macro) => m.lines.map(l => (l.kind === 'type' ? data.db.types.find(t => t.id === l.id)?.name : `${data.db.items.find(i => i.id === l.id)?.name} ×${l.qty || 1}`) || l.id).join(' · ')
 async function delMacro(m: Macro) { if (await ui.confirm(`Törlöd a(z) <b>${m.name}</b> rövidítést?`, 'Törlés', true)) { dict.s.macros = dict.s.macros.filter(x => x.id !== m.id); ui.toast('Rövidítés törölve') } }
 async function delRule(id: string) { if (await ui.confirm('Törlöd ezt a tanult javítást?', 'Törlés', true)) dict.removePersonal(id) }
+/* v2.5 4. pont: értelmezési szabályok (kifejezés → tétel / anyag / fogszám / mennyiség) */
+const irules = computed(() => dict.s.interp.slice().reverse())
+async function delInterp(id: string) { if (await ui.confirm('Törlöd ezt a tanult értelmezési szabályt?', 'Törlés', true)) dict.removeInterp(id) }
 async function exportLearned() {
   const central = await dict.pullLearn(true)
   const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), local: { rules: dict.s.personal, macros: dict.s.macros }, central: central?.raw || null }, null, 1)], { type: 'application/json' })
@@ -54,7 +57,7 @@ async function exportLearned() {
         </div>
         <div v-if="dict.s.aiStats.runs" class="small"><b>AI hozzáadott értéke:</b> {{ dict.s.aiStats.runs }} diktálás, {{ dict.s.aiStats.diffs }} eltérés; az AI-nak {{ dict.s.aiStats.aiRight }}×, a szabálynak {{ dict.s.aiStats.ruleRight }}× volt igaza.</div>
       </template>
-      <div class="hint" data-test="demo-felirat">Demó v2.4 – bemutató verzió: a diktálás pontos felismerése a Cloudflare Workers AI Whisper-modelljével működik (a böngésző felismerője a háttérben fut, és ha a Whisper nem ad használható szöveget, magától erre vált); az AI-értelmezés itt és a diktálás ablakban kapcsolható. API-kulcsot nem kell megadni. A hangfelvétel nem tárolódik.</div>
+      <div class="hint" data-test="demo-felirat">Demó v2.5 – bemutató verzió: a diktálás pontos felismerése a Cloudflare Workers AI Whisper-modelljével működik (a böngésző felismerője a háttérben fut, és ha a Whisper nem ad használható szöveget, magától erre vált); az AI-értelmezés itt és a diktálás ablakban kapcsolható. API-kulcsot nem kell megadni. A hangfelvétel nem tárolódik.</div>
     </div>
 
     <div class="card" data-test="roviditeseim">
@@ -74,6 +77,7 @@ async function exportLearned() {
     <div class="card" data-test="tanult-javitasok">
       <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Tanult javítások</h2><div class="spacer" /><button v-if="DEV_TOOLS" class="btn sm" @click="exportLearned">Export (JSON)</button></div>
       <p class="small muted" style="margin-top:0">A javítás maga a jóváhagyás: ha egyszer kijavítasz egy félreértett szót („Nem ezt mondtam”, vagy a ⚠ sor választása), a program a következő diktálástól magától javítja. A kiejtési javítás csak rád vonatkozik, a szakmai a rendelő minden felhasználójára. A main ágon tanultak a teszt ágon is érvényesek, fordítva nem.</p>
+      <div class="hint small" data-test="tanult-eszkoz">A tanult javítások ezen az eszközön érvényesek. (A demó a böngészőben tárolja őket; a központi mentés a diktálás mentésekor, kötegben történik, így eszközcsere után is visszatölthetők.)</div>
       <div v-if="rules.length" class="scroll-x"><table class="t ss"><thead><tr><th>Hallott</th><th>Helyes</th><th class="hide-m">Kinek</th><th class="hide-m">Forrás</th><th>Lefutott</th><th /></tr></thead>
         <tbody><tr v-for="r in rules" :key="r.id" :style="r.active ? '' : 'opacity:.55'">
           <td>„{{ r.from }}”</td><td><b>„{{ r.to }}”</b><span v-if="r.cat" class="small muted"> · {{ r.cat }}</span></td>
@@ -83,6 +87,16 @@ async function exportLearned() {
           <td class="nowrap"><label class="switch" :class="{ on: r.active }" @click.prevent="r.active = !r.active"><i /></label> <button class="btn sm danger" @click="delRule(r.id)">×</button></td>
         </tr></tbody></table></div>
       <p v-else class="muted small">Még nincs tanult javítás.</p>
+      <!-- v2.5 4. pont 1–4.: értelmezési szabályok – a szöveg jó volt, de az értelmezés tévedett; a kézi javításból automatikusan -->
+      <h3 style="margin-top:14px">Tanult értelmezések</h3>
+      <p class="small muted" style="margin-top:0">Ha a szöveg jó volt, de a program rosszul értelmezte (kézzel javított mennyiség vagy anyag, a ⚠ sorban választott fog vagy művelet), a javításból szabály lesz, pl. „kérek öt tampont” → Vattatampon 5 db. A rendelő minden felhasználójára érvényes; az első alkalmazáskor „Korábbi javításod alapján” jelölést kap, és visszavonható.</p>
+      <div v-if="irules.length" class="scroll-x" data-test="tanult-ertelmezesek"><table class="t ss"><thead><tr><th>Kifejezés</th><th>Értelmezés</th><th class="hide-m">Fajta</th><th>Lefutott</th><th class="hide-m">Utólag javítva</th><th /></tr></thead>
+        <tbody><tr v-for="r in irules" :key="r.id" :style="r.active ? '' : 'opacity:.55'">
+          <td>„{{ r.from }}”</td><td><b>{{ r.to }}</b></td><td class="small hide-m">{{ r.cat }}<span v-if="r.source === 'kozponti'" class="muted"> · központi</span><span v-if="r.branch" class="muted"> · {{ r.branch }}</span></td>
+          <td class="small">{{ r.uses || 0 }}×</td><td class="small hide-m">{{ r.corrected || 0 }}×</td>
+          <td class="nowrap"><label class="switch" :class="{ on: r.active }" @click.prevent="r.active = !r.active"><i /></label> <button class="btn sm danger" @click="delInterp(r.id)">×</button></td>
+        </tr></tbody></table></div>
+      <p v-else class="muted small">Még nincs tanult értelmezés.</p>
     </div>
 
     <div class="card">
@@ -95,7 +109,7 @@ async function exportLearned() {
         <li>A gyakran diktált csoportra készíts <b>rövidítést</b>, és mondd a nevét: „szokásos kontroll”.</li>
         <li>Zajos környezetben: csiptetős vagy fejmikrofon, közel a szádhoz. A „Diktálás betanítása” megmutatja, mennyire jó az eszközöd.</li>
       </ul>
-      <div style="margin-top:10px"><NuxtLink class="btn sm" to="/beallitasok?tab=train">Diktálás betanítása</NuxtLink></div>
+      <div class="row" style="margin-top:10px"><NuxtLink class="btn sm" to="/beallitasok?tab=train">Diktálás betanítása</NuxtLink><NuxtLink class="small" :to="{ path: '/sugo', query: { fejezet: 'betanitas' } }">Hogyan működik a betanítás? (Súgó)</NuxtLink></div>
     </div>
   </div>
 </template>

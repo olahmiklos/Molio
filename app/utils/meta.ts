@@ -1,15 +1,15 @@
 // A program verziója és a specifikáció, amely alapján készült
 declare const __MOLIO_BUILD__: { commit: string; branch: string; builtAt: string } | undefined
 
-export const APP_VERSION = '2.4.0'
-/** a verziójelzés alapja: demó v2.4, a specifikáció v2.4 alapján */
-export const APP_LABEL = 'Molio – bemutató (demó) verzió v2.4'
+export const APP_VERSION = '2.5.0'
+/** a verziójelzés alapja: demó v2.5, a specifikáció v2.5 alapján */
+export const APP_LABEL = 'Molio – bemutató (demó) verzió v2.5'
 export const SPEC = {
-  title: 'Molio_fogorvosi_szoftver_specifikacio_v2.4',
+  title: 'Molio_fogorvosi_szoftver_specifikacio_v2.5',
   name: 'Molio — Fogorvosi Szoftver — Funkcionális Specifikáció',
-  version: 'v2.4',
+  version: 'v2.5',
   /** a specifikáció utolsó módosítása */
-  date: '2026. november 24.',
+  date: '2026. november 26.',
 }
 
 /** a buildkor (nuxt.config.ts) a ténylegesen fordított kódból kerül be: build ideje, ág és commit; nem kézzel írt szöveg */
@@ -33,9 +33,9 @@ const ISO_DAY = (iso: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'E
 export const BUILD_DATE = ISO_DAY(buildInfo().builtAt)
 export const BUILD_DATE_HU = HU_DATE(buildInfo().builtAt)
 export const BUILD_TIME_HU = `${HU_DATE(buildInfo().builtAt)} ${HU_TIME(buildInfo().builtAt)}`
-/** a felületi verziójelzés: „Demó v2.4 – a specifikáció v2.4 alapján készült” (a build dátumával együtt jelenik meg) */
+/** a felületi verziójelzés: „Demó v2.5 – a specifikáció v2.5 alapján készült” (a build dátumával együtt jelenik meg) */
 export const VERSION_LINE = `Demó v${APP_VERSION.replace(/\.0$/, '')} – a specifikáció ${SPEC.version} alapján készült`
-/** rövid jelvény a láblécben és a bejelentkezési képernyőn: „v2.4 · spec 2.4 · 2026-11-25” */
+/** rövid jelvény a láblécben és a bejelentkezési képernyőn: „v2.5 · spec 2.5 · 2026-11-26” */
 export const VERSION_BADGE = `v${APP_VERSION.replace(/\.0$/, '')} · spec ${SPEC.version.slice(1)} · ${BUILD_DATE}`
 /** a verzióadatok másolható, szöveges formában (hibabejelentéshez) */
 export function versionReport(dataVersion: number): string {

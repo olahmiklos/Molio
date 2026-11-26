@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // Diktálás betanítása (spec v2.3, 3. pont; v2.4 1., 3., 4., 19. pont).
+// – v2.5 2. pont: „Hogyan használd?” összecsukható útmutató lépésekkel és hivatkozással a Súgó fejezetére; döntési kérdés minden javaslatnál;
+//   tipp a „Tovább így is” mellett; „A tanult javítások ezen az eszközön érvényesek” jelzés.
 // – Rövid, összecsukható használati útmutató a képernyő tetején; a bemutató-tájékoztató felirat itt nem jelenik meg (1. pont); AI-kapcsoló nincs (19/1).
 // – Az összehasonlítás kapcsoló nélkül, mindig fut a háttérben (19. pont 1.); az eredménye csak a teszt ágon, a fejlesztői panelben látszik.
 // – Minden felolvasott szakasz után egyértelmű visszajelzés: ✔ Jól felismertem / ⚠ Néhány szót másképp hallottam / ✖ Nem sikerült megérteni, és hogy mit tanult a program.
@@ -24,7 +26,8 @@ onBeforeUnmount(() => { if (voice.recording) voice.stop() })
 const db = computed(() => data.db)
 const vocab = computed(() => buildVocab({ items: db.value.items, types: db.value.types, statusDict: db.value.settings.statusDict }))
 const ctx = () => ({ items: db.value.items, types: db.value.types, vocab: vocab.value })
-const guide = ref(!dict.trained)
+// v2.5 2. pont 7.: iOS-en (keskeny képernyőn) az útmutató alapból összecsukott; asztali gépen az első betanításnál nyitva
+const guide = ref(!dict.trained && typeof window !== 'undefined' && window.innerWidth >= 700 && !/iPhone|iPad|iPod/.test(navigator.userAgent))
 
 interface Part { id: string; text: string; live: string; browserFinal: string; whisper: string; recognizer: string; seconds: number; noSpeech: boolean; fallback: boolean; quiet: boolean; loud: boolean; none: boolean }
 const parts = reactive<Record<string, Part>>({})
@@ -116,12 +119,20 @@ const ratingCls = (r: string) => (r === 'jó' ? 'b-green' : r === 'közepes' ? '
 
 <template>
   <div>
-    <details class="hint" :open="guide" @toggle="guide = ($event.target as HTMLDetailsElement).open">
-      <summary style="cursor:pointer;font-weight:700">Hogyan működik a betanítás?</summary>
-      <p style="margin:6px 0 0;line-height:1.6">Olvasd fel a szakaszt a „Felolvasom” gombbal. A program összeveti, amit mondtál, azzal, amit hallott. Az eltérésekből javítási szabályt javasol – ezt te hagyod jóvá. Cél: hogy a diktálás a te hangodat és mikrofonodat jobban értse.
-        Minden szakasz után megmondja, rendben volt-e; az eredmény magától mentődik (csak szöveg, hangfelvétel nem). Kb. 2 perc, egy felvétel legfeljebb 30 másodperc.</p>
+    <!-- v2.5 2. pont 2.: összecsukható „Hogyan használd?” útmutató 4–5 lépéssel, hivatkozás a Súgó teljes fejezetére -->
+    <details class="hint" :open="guide" data-test="betanitas-utmutato" @toggle="guide = ($event.target as HTMLDetailsElement).open">
+      <summary style="cursor:pointer;font-weight:700">Hogyan használd?</summary>
+      <ol style="margin:6px 0 0 18px;padding:0;line-height:1.6">
+        <li>Nyomd meg a „Felolvasom” gombot, és olvasd fel a szakaszt természetes tempóban (szakaszonként kb. 30 másodperc).</li>
+        <li>Nézd meg a visszajelzést: ✔ zöld – „Tovább”; ⚠ sárga – látod a másképp hallott szavakat, „Tovább így is” vagy „Mondja el újra”; ✖ piros – „Mondja el újra”.</li>
+        <li>A „Tovább így is” csak továbblép: a szabályról a végén döntesz.</li>
+        <li>A végén döntsd el a javaslatokat egyenként: ha a hallott szót a diktálásban sosem akarod valóban mondani, „Jóváhagyom”; ha előfordulhat, vagy bizonytalan vagy, „Nem”.</li>
+        <li>A mentés automatikus (csak szöveg, hangfelvétel nem); a jóváhagyott javítás a következő diktálástól magától lefut.</li>
+      </ol>
+      <p class="small" style="margin:6px 0 0"><NuxtLink :to="{ path: '/sugo', query: { fejezet: 'betanitas' } }" data-test="betanitas-sugo-link">A teljes leírás a Súgóban: Diktálás betanítása – lépésről lépésre →</NuxtLink></p>
       <p class="small muted" style="margin:4px 0 0">Az AI-értelmezés a Diktálás lapon kapcsolható, a betanításhoz nem kell.</p>
     </details>
+    <div class="small muted" style="margin:0 0 8px" data-test="tanult-eszkoz-betanitas">A tanult javítások ezen az eszközön érvényesek.</div>
     <div class="card">
       <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Felolvasandó szöveg</h2><div class="spacer" /><button class="btn sm" @click="reset">Újrakezdés</button></div>
       <DictBar />
@@ -145,6 +156,8 @@ const ratingCls = (r: string) => (r === 'jó' ? 'b-green' : r === 'közepes' ? '
             <button v-if="verdict(parts[s.id]!) !== 'ok'" class="btn sm" :class="{ pri: verdict(parts[s.id]!) === 'bad' }" @click="rec(s.id)">Mondja el újra</button>
             <button v-if="verdict(parts[s.id]!) !== 'bad' && i < TRAIN_SECTIONS.length - 1" class="btn sm" :class="{ pri: verdict(parts[s.id]!) === 'ok' }" @click="next(s.id)">{{ verdict(parts[s.id]!) === 'ok' ? 'Tovább' : 'Tovább így is' }}</button>
           </div>
+          <!-- v2.5 2. pont 3.: a „Tovább így is” nem szabályelfogadás -->
+          <div v-if="verdict(parts[s.id]!) === 'some' && i < TRAIN_SECTIONS.length - 1" class="small muted" style="margin-top:4px" data-test="tovabb-tipp">Tipp: a „Tovább így is” csak továbblép; a szabályról a végén döntesz.</div>
           <div v-if="DEV_TOOLS" class="small muted" style="margin-top:6px">Hallott ({{ parts[s.id]!.recognizer }}): {{ parts[s.id]!.text || '–' }}</div>
         </div>
       </div>
@@ -166,11 +179,15 @@ const ratingCls = (r: string) => (r === 'jó' ? 'b-green' : r === 'közepes' ? '
       </template>
       <p v-else class="muted">Még nem érkezett értelmezhető beszéd – a szakaszok nem számítanak bele az értékelésbe.</p>
       <h3 v-if="shown.length">Javasolt javítások – egyenként hagyd jóvá</h3>
-      <div v-for="w in shown" :key="sugKey(w)" class="row" style="padding:6px 0;border-bottom:1px solid #eef1f3">
-        <span>„<b>{{ w.heard }}</b>” → „<b>{{ w.said }}</b>”</span>
-        <span v-if="isNum(w)" class="badge b-yellow">számot / fogszámot érint</span>
-        <div class="spacer" />
-        <button class="btn sm pri" @click="accept(w)">Jóváhagyom</button><button class="btn sm" @click="reject(w)">Nem</button>
+      <!-- v2.5 2. pont 3.: egyszerű döntési szabály minden javaslat mellett (Nem → Jóváhagyom; Igen vagy bizonytalan → Nem); tömeges jóváhagyás nincs -->
+      <div v-for="w in shown" :key="sugKey(w)" style="padding:6px 0;border-bottom:1px solid #eef1f3" data-test="betanitas-javaslat">
+        <div class="row">
+          <span>ha ezt hallja: „<b>{{ w.heard }}</b>” → értse úgy: „<b>{{ w.said }}</b>”</span>
+          <span v-if="isNum(w)" class="badge b-yellow">számot / fogszámot érint – légy óvatos</span>
+          <div class="spacer" />
+          <button class="btn sm pri" @click="accept(w)">Jóváhagyom</button><button class="btn sm" @click="reject(w)">Nem</button>
+        </div>
+        <div class="small muted" style="margin-top:2px" data-test="javaslat-kerdes">Előfordulhat, hogy a hallott szót („{{ w.heard }}”) valóban azt akartad mondani? <b>Nem</b> → Jóváhagyom; <b>igen vagy bizonytalan</b> → Nem.</div>
       </div>
       <p v-if="finished && !shown.length && valid.length" style="margin:8px 0 0"><b>Minden jól ment, nincs teendő.</b></p>
       <p class="small muted" style="margin:8px 0 0">Az eredmény magától mentődik (csak szöveg, hangfelvétel nem).</p>

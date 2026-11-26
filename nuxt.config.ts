@@ -20,6 +20,11 @@ export default defineNuxtConfig({
   future: { compatibilityVersion: 4 },
   devtools: { enabled: false },
   ssr: false,
+  // v2.5 1. pont (B-008): a Nuxt beépített elavult-build figyelője minden ágon ki van kapcsolva (különben óránként lekéri a
+  // /_nuxt/builds/latest.json fájlt, és eltérésnél a chunk-reload bővítmény a következő oldalváltáskor csendben újratölt).
+  // A frissítést egyedül a service worker / PWA észleli; hiányzó programfájlnál sincs csendes újratöltés ('manual': az
+  // app:chunkError eseményt a layout kezeli, a felugró ablakkal).
+  experimental: { checkOutdatedBuildInterval: false, emitRouteChunkError: 'manual' },
   modules: ['@pinia/nuxt', '@vite-pwa/nuxt'],
   vite: { define: { __MOLIO_BUILD__: JSON.stringify(BUILD), __MOLIO_DEV__: JSON.stringify(DEV_TOOLS) } },
   css: [

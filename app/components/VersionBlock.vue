@@ -7,6 +7,8 @@ import { useDictStore } from '~/stores/dict'
 import { useVoiceStore } from '~/stores/voice'
 import { AI_MODEL_LABEL, WHISPER_MODEL } from '~/utils/dict/prompt'
 import { APP_VERSION, BUILD_TIME_HU, SPEC, VERSION_LINE, buildInfo, versionReport, DEV_TOOLS } from '~/utils/meta'
+import { checkForUpdate, lastUpdateCheck, NUXT_WATCHER_OFF } from '~/utils/updates'
+import { fmtDT } from '~/utils/dates'
 
 const data = useDataStore()
 const ui = useUiStore()
@@ -18,14 +20,15 @@ onMounted(() => { dict.init(); void voice.probe() })
 const recognizer = computed(() => dict.eff.recognizer === 'whisper' ? `Pontos felismerés (Whisper – ${WHISPER_MODEL})` : 'Alap felismerés (a böngésző saját felismerője)')
 const aiLine = computed(() => `${AI_MODEL_LABEL} – ${dict.s.prefs.ai ? 'be van kapcsolva' : 'ki van kapcsolva (kísérleti)'}`)
 const accLine = computed(() => `Diktálás-értelmezés pontossága: ${String(acc.total).replace('.', ',')}% – tesztkészlet: ${acc.examples} példa${acc.prev ? ` (előző kiadás: ${String(acc.prev.total).replace('.', ',')}%)` : ''}`)
-const report = computed(() => [versionReport(data.db.version), `Felismerő: ${recognizer.value}`, `AI-értelmezés: ${aiLine.value}`, accLine.value].join('\n'))
+const lastCheckTxt = computed(() => (lastUpdateCheck.value ? fmtDT(new Date(lastUpdateCheck.value)) : 'még nem volt'))
+const watcherLine = computed(() => `Nuxt elavult-build figyelő: ${NUXT_WATCHER_OFF ? 'kikapcsolva' : 'BEKAPCSOLVA'} – a frissítést a service worker észleli; utolsó frissítés-ellenőrzés: ${lastCheckTxt.value}`)
+const report = computed(() => [versionReport(data.db.version), `Felismerő: ${recognizer.value}`, `AI-értelmezés: ${aiLine.value}`, accLine.value, ...(DEV_TOOLS ? [watcherLine.value] : [])].join('\n'))
 
 async function check() {
   state.value = 'checking'
   try {
-    const reg = await navigator.serviceWorker?.getRegistration()
+    const reg = await checkForUpdate()
     if (!reg) { state.value = 'unsupported'; return }
-    await reg.update()
     await new Promise(r => setTimeout(r, 1500))
     if (reg.waiting || $pwa?.needRefresh) state.value = 'found'
     else state.value = 'latest'
@@ -51,8 +54,10 @@ async function copy() {
       <div>Felismerő</div><div>{{ recognizer }}</div>
       <div>AI-értelmezés</div><div>{{ aiLine }}</div>
       <div>Pontosság</div><div>{{ accLine }}<br><span class="muted small">kategóriánként: <template v-for="(v, k) in acc.byCat" :key="k">{{ k }} {{ String(v).replace('.', ',') }}% · </template></span></div>
-      <div v-if="b.env !== 'DEMÓ'">Ág és kód</div><div v-if="b.env !== 'DEMÓ'">{{ b.branch || 'ismeretlen' }} · <code>{{ b.short || 'ismeretlen' }}</code></div>
-      <div v-else>Kód</div><div v-if="b.env === 'DEMÓ'"><code>{{ b.short || 'ismeretlen' }}</code> <span class="muted">({{ b.branch }})</span></div>
+      <!-- v2.5 1. pont 5.: a „Kód” sor a commit mellett zárójelben az ágat mutatja, pl. „(main)” -->
+      <div>Kód</div><div data-test="kod-sor"><code>{{ b.short || 'ismeretlen' }}</code> <span class="muted">({{ b.branch || 'ismeretlen ág' }})</span></div>
+      <!-- v2.5 1. pont 5.: a teszt ági fejlesztői részletekben a frissítés-figyelés állapota -->
+      <template v-if="DEV_TOOLS"><div>Frissítés-figyelés</div><div class="small" data-test="frissites-figyeles">Nuxt elavult-build figyelő: <b>{{ NUXT_WATCHER_OFF ? 'kikapcsolva' : 'BEKAPCSOLVA' }}</b> – a frissítést a service worker észleli. Utolsó frissítés-ellenőrzés: {{ lastCheckTxt }}</div></template>
       <!-- v2.4 20. pont: rejtett „Látogatások” nézet – csak a teszt / fejlesztői buildben (a main buildben az oldal sem létezik) -->
       <template v-if="DEV_TOOLS"><div>Látogatások</div><div><NuxtLink to="/latogatasok" data-test="latogatasok-sor">Látogatások megnyitása →</NuxtLink> <span class="small muted">ki, mikor és melyik verziót nézte meg a main és a teszt oldalon</span></div></template>
     </div>

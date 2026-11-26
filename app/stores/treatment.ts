@@ -26,6 +26,8 @@ import { correctionPairs, guessCat, isRiskyCat, scopeOf } from '~/utils/dict/lea
 import type { PromptStyle } from '~/utils/dict/prompt'
 import { planMarks, queueInfo } from '~/utils/v24'
 import { norm } from '~/utils/dates'
+import { clauseWithKw, clauseWithTooth, clauseWithWord, matchRules, type InterpRule } from '~/utils/dict/interp'
+import { useUiStore } from './ui'
 
 export type RowState = 'ok' | 'diff' | 'dict' | 'pkg' | 'manual' | 'macro'
 export interface MatRow { id: string; pk: number; dq?: number; dRel?: number; st: RowState; auto: number; qty: number; manual: boolean; checked: boolean; /** v2.4 15. pont: a sor (részben) rövidítésből jön */ macro?: string }
@@ -83,6 +85,11 @@ interface Session {
   macroRestore: string[]
   /** v2.4 6. pont: az ebben a kezelésben visszavont tanult szabályok */
   undoRules: string[]
+  /** v2.5 4. pont: az ebben a kezelésben tanult értelmezési szabályok (a következő diktálástól érvényesek, itt még nem futnak le),
+   * a kézzel hozzáadott anyaghoz tanult szabály (a mennyiség utólagos módosítása ezt frissíti), és az itt lefutott tanult szabályok (mérés) */
+  learnedHere?: string[]
+  interpItem?: Record<string, string>
+  seenRules?: string[]
   ai: { state: 'idle' | 'run' | 'done' | 'err'; model: string; items: { tooth: number | null; typeId: string; status: string }[]; materials: { item: string; qty: number }[]; error: string }
 }
 
@@ -234,12 +241,37 @@ export const useTreatmentStore = defineStore('treatment', () => {
   function setMacroOmit(key: string, idx: number) { const x = s.value; if (!x) return; x.macroOmit[key] = idx; applyParse() }
   function restoreMacroLine(h: MacroHit, i: number) { const x = s.value; if (!x) return; if (!x.macroRestore.includes(lineKey(h, i))) x.macroRestore.push(lineKey(h, i)); applyParse() }
   /* ---------- v2.4 6. pont: a tanult szabály első alkalmazása (fogszám / művelet / anyag) jelölést kap és visszavonható ---------- */
+  /** v2.5 4. pont: a most lefutott értelmezési szabályok (applyParse tölti) */
+  const interpApplied = ref<InterpRule[]>([])
   const learnedApplied = computed(() => {
     const d = dictStore(), seen = new Set<string>()
-    return pipe.value.steps.filter(st => st.kind === 'personal').map(st => d.s.personal.find(p => p.from === st.from && p.to === st.to)).filter((p): p is NonNullable<typeof p> => !!p && !seen.has(p.id) && (seen.add(p.id), true))
-      .map(p => ({ rule: p, first: (p.uses || 0) === 0, risky: isRiskyCat(p.cat) }))
+    const word = pipe.value.steps.filter(st => st.kind === 'personal').map(st => d.s.personal.find(p => p.from === st.from && p.to === st.to)).filter((p): p is NonNullable<typeof p> => !!p && !seen.has(p.id) && (seen.add(p.id), true))
+      .map(p => ({ rule: p as { id: string; from: string; to: string; uses?: number; cat?: string }, first: (p.uses || 0) === 0, risky: isRiskyCat(p.cat), interp: false }))
+    // az értelmezési szabály mindig fogszámot, műveletet vagy anyagot (mennyiségét) módosít: az első alkalmazáskor jelölést kap
+    const ip = interpApplied.value.map(r => ({ rule: r as { id: string; from: string; to: string; uses?: number; cat?: string }, first: (r.uses || 0) === 0, risky: true, interp: true }))
+    return [...word, ...ip]
   })
   function undoLearned(ruleId: string) { const x = s.value; if (!x) return; if (!x.undoRules.includes(ruleId)) x.undoRules.push(ruleId); applyParse() }
+  /* ---------- v2.5 4. pont: értelmezési javítás tanulása (a javítás maga a jóváhagyás) ---------- */
+  const itemOf = (id: string) => db.value.items.find(i => i.id === id)
+  const kwOf = (id: string) => { const it = itemOf(id); return it ? [...(it.kw || []), norm(it.name).split(' ')[0]! + '*'] : [] }
+  /** szabály a javításból; csak diktált szövegnél és új kezelésnél; ütközésnél a legutóbbi érvényes, a program jelzi */
+  function learnInterp(x: Parameters<ReturnType<typeof useDictStore>['learnInterp']>[0]): InterpRule | null {
+    const st = s.value; if (!st || st.recordId || !st.text.trim()) return null
+    const r = dictStore().learnInterp(x); if (!r) return null
+    st.learnedHere = [...new Set([...(st.learnedHere || []), r.rule.id])]
+    useUiStore().toast(r.conflict ? `Ütköző javítás: „${r.rule.from}” korábban → ${r.conflict}, most → ${r.rule.to} (a legutóbbi érvényes).` : `Megjegyeztem: „${r.rule.from}” → ${r.rule.to} – a következő diktálástól magától így értelmezem.`)
+    return r.rule
+  }
+  /** kézzel javított mennyiség (vagy a ⚠ sorban választott mennyiség / anyag): a tételt említő mondatrészből szabály */
+  function learnQty(id: string, qty: number, cat: 'mennyiség' | 'anyag' = 'mennyiség') {
+    const st = s.value; if (!st) return
+    const it = itemOf(id); if (!it) return
+    const ruleId = st.interpItem?.[id]
+    if (ruleId) { const r = dictStore().s.interp.find(v => v.id === ruleId); if (r) { r.qty = qty; r.to = `${it.name} ${qty} ${it.unit}`; return } }
+    const phrase = clauseWithKw(pipe.value.text, kwOf(id)); if (!phrase) return
+    learnInterp({ phrase, cat, item: id, qty, from: phrase, to: `${it.name} ${qty} ${it.unit}` })
+  }
   function applyParse() {
     if (!s.value) return
     const x = s.value
@@ -268,8 +300,27 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const doneTeeth = new Set(ip.done.map(d => d.tooth))
     const statusOnly = Object.keys(dictStatus.value).map(Number).filter(n => !doneTeeth.has(n))
     parsed.value.teeth = parsed.value.teeth.filter(t => !statusOnly.includes(t))
-    // ⚠ jóváhagyott fogcsere (15. pont): a diktált fogszám helyett a választott fog
-    const sub = x.toothSub
+    // v2.5 4. pont: a tanult értelmezési szabályok („kifejezés → tétel / anyag / fogszám / mennyiség”) – az ebben a kezelésben
+    // tanultak itt még nem futnak (a következő diktálástól érvényesek), a visszavontak sem
+    const ruleSub: Record<number, number> = {}
+    if (!x.recordId) {
+      const hits = matchRules(pipe.value.text, d.s.interp, [...x.undoRules, ...(x.learnedHere || [])])
+      hits.forEach(r => {
+        if ((r.cat === 'mennyiség' || r.cat === 'anyag') && r.item && r.qty !== undefined && db.value.items.some(i => i.id === r.item)) { parsed.value.qty[r.item] = r.qty; confirmRow(r.item) }
+        else if (r.cat === 'fogszám' && r.fromTooth && r.tooth && (parsed.value.teeth.includes(r.fromTooth) || itemParse.value.done.some(p => p.tooth === r.fromTooth))) ruleSub[r.fromTooth] = r.tooth
+        else if (r.cat === 'művelet' && r.typeId && db.value.types.some(t => t.id === r.typeId)) {
+          const t = r.tooth ?? null
+          if (!itemParse.value.done.some(p => p.tooth === t && p.typeId === r.typeId)) itemParse.value.done.push({ tooth: t, typeId: r.typeId })
+          if (!itemParse.value.doneTypes.includes(r.typeId)) itemParse.value.doneTypes.push(r.typeId)
+          if (t && !parsed.value.teeth.includes(t)) parsed.value.teeth.push(t)
+          if (!parsed.value.types.includes(r.typeId)) parsed.value.types.push(r.typeId)
+        }
+      })
+      interpApplied.value = hits.filter(r => r.cat !== 'fogszám' || ruleSub[r.fromTooth!] !== undefined)
+      x.seenRules = [...new Set([...(x.seenRules || []), ...interpApplied.value.map(r => r.id), ...pipe.value.steps.filter(st => st.kind === 'personal').map(st => d.s.personal.find(p => p.from === st.from && p.to === st.to)?.id).filter((v): v is string => !!v)])]
+    } else interpApplied.value = []
+    // ⚠ jóváhagyott fogcsere (15. pont): a diktált fogszám helyett a választott fog (a tanult fogszám-szabály is ide kerül, a választás az erősebb)
+    const sub = { ...ruleSub, ...x.toothSub }
     if (Object.keys(sub).length) {
       const m = (n: number) => sub[n] ?? n
       parsed.value.teeth = [...new Set(parsed.value.teeth.map(m))].sort((a, b) => a - b)
@@ -534,13 +585,27 @@ export const useTreatmentStore = defineStore('treatment', () => {
         }
         break
       }
-      case 'chart': { x.resolved[f.key] = choice; const n = Number(f.data?.tooth), m = Number(choice); if (m !== n) swapTooth(n, m); break }
-      case 'qty': case 'life': { x.resolved[f.key] = choice; const it = f.data?.item as string; if (choice !== 'ok' && it) { x.overrides[it] = Number(choice); confirmRow(it) } else if (it) confirmRow(it); break }
+      case 'chart': {
+        x.resolved[f.key] = choice; const n = Number(f.data?.tooth), m = Number(choice)
+        if (m !== n) {
+          // v2.5 4. pont: a ⚠ sorban választott fog szabály lesz (a fogszámot említő mondatrészből)
+          const phrase = clauseWithTooth(pipe.value.text, n)
+          if (phrase && m) learnInterp({ phrase, cat: 'fogszám', fromTooth: n, tooth: m, from: phrase, to: `${m}-es fog (nem ${n})` })
+          swapTooth(n, m)
+        }
+        break
+      }
+      case 'qty': case 'life': { x.resolved[f.key] = choice; const it = f.data?.item as string; if (choice !== 'ok' && it) { x.overrides[it] = Number(choice); confirmRow(it); if (!auto) learnQty(it, Number(choice)) } else if (it) confirmRow(it); break }
       case 'ai': {
         x.resolved[f.key] = choice
         if (choice === 'ai') {
-          if (f.data?.item) { if (f.data.add) addMaterial(f.data.item as string); x.overrides[f.data.item as string] = Number(f.data.qty); confirmRow(f.data.item as string) }
-          else if (f.data?.add) addItem((f.data.tooth as number | null), f.data.typeId as string)
+          if (f.data?.item) { if (f.data.add) addMaterial(f.data.item as string, false); x.overrides[f.data.item as string] = Number(f.data.qty); confirmRow(f.data.item as string); learnQty(f.data.item as string, Number(f.data.qty), f.data.add ? 'anyag' : 'mennyiség') }
+          else if (f.data?.add) {
+            addItem((f.data.tooth as number | null), f.data.typeId as string)
+            // v2.5 4. pont: a ⚠ sorban választott művelet szabály lesz, ha a mondatrész a fogat is megnevezi
+            const tooth = f.data.tooth as number | null, typeId = f.data.typeId as string, phrase = tooth ? clauseWithTooth(pipe.value.text, tooth) : null
+            if (phrase) learnInterp({ phrase, cat: 'művelet', tooth, typeId, from: phrase, to: `${tooth}-es fog – ${db.value.types.find(t => t.id === typeId)?.name || typeId}` })
+          }
           else if (f.data?.key) removeItem(f.data.key as string)
         }
         break
@@ -604,10 +669,17 @@ export const useTreatmentStore = defineStore('treatment', () => {
     if (!s.value) return
     const before = rows.value.find(r => r.id === id)?.qty
     s.value.overrides[id] = Math.max(0, Number(v) || 0); confirmRow(id)
-    if (before !== undefined && before !== s.value.overrides[id]) logCorrection('mennyiseg', `${db.value.items.find(i => i.id === id)?.name || id}: ${before} → ${s.value.overrides[id]}`, `${before}`)
+    if (before !== undefined && before !== s.value.overrides[id]) { logCorrection('mennyiseg', `${db.value.items.find(i => i.id === id)?.name || id}: ${before} → ${s.value.overrides[id]}`, `${before}`); learnQty(id, s.value.overrides[id]!) }
   }
   function resetQty(id: string) { if (s.value) delete s.value.overrides[id] }
-  function addMaterial(id: string) { const x = s.value; if (!x) return; if (!x.extra.includes(id)) x.extra.push(id); setChecked(id, true); if (x.overrides[id] === undefined) x.overrides[id] = 1 }
+  function addMaterial(id: string, learnIt = true) {
+    const x = s.value; if (!x) return; if (!x.extra.includes(id)) x.extra.push(id); setChecked(id, true); if (x.overrides[id] === undefined) x.overrides[id] = 1
+    // v2.5 4. pont: ha a szövegben ismeretlen szó maradt, és az orvos kézzel adja hozzá az anyagot, a kifejezésből szabály lesz („kérek öt tampont” → Vattatampon)
+    if (learnIt && pipe.value.unknown.length && !x.recordId && x.text.trim()) {
+      const phrase = clauseWithWord(pipe.value.text, pipe.value.unknown), it = itemOf(id)
+      if (phrase && it) { const r = learnInterp({ phrase, cat: 'anyag', item: id, qty: x.overrides[id]!, from: phrase, to: `${it.name} ${x.overrides[id]} ${it.unit}` }); if (r) x.interpItem = { ...(x.interpItem || {}), [id]: r.id } }
+    }
+  }
 
   const fee = itemTotal
   /** a kiadandó gyártási tételek előnézete (lejárat szerint) */
@@ -718,7 +790,20 @@ export const useTreatmentStore = defineStore('treatment', () => {
     dropDraft(x.patientId, x.appointmentId)
     // v2.4 6. pont: a tanult szabályok használata (mérhetőség); v2.4 15. pont: rövidítések használata, frissítési javaslat, ajánlás
     const d = dictStore()
-    learnedApplied.value.forEach(l => { l.rule.uses = (l.rule.uses || 0) + 1 })
+    // v2.5 4. pont 4.: mérés – hányszor futott le egy tanult szabály, és hányszor kellett utána mégis javítani (visszavonás, eltérő kézi mennyiség)
+    const seen = x.seenRules || []
+    let ran = 0, fixedAfter = 0
+    seen.forEach(id => {
+      const pr = d.s.personal.find(p => p.id === id), ir = d.s.interp.find(r => r.id === id)
+      const r = pr || ir; if (!r) return
+      r.uses = (r.uses || 0) + 1; ran++
+      const undone = x.undoRules.includes(id)
+      const overridden = !!ir && !!ir.item && ir.qty !== undefined && x.overrides[ir.item] !== undefined && x.overrides[ir.item] !== ir.qty
+      if (undone || overridden) { (r as { corrected?: number }).corrected = ((r as { corrected?: number }).corrected || 0) + 1; fixedAfter++ }
+    })
+    if (ran) d.addLog({ source: 'auto', kind: 'tanult-szabaly', raw: '', interpreted: seen.map(id => d.s.personal.find(p => p.id === id)?.from || d.s.interp.find(r => r.id === id)?.from || id).join(' | '), final: `tanult szabály lefutott: ${ran}; utólag javítva: ${fixedAfter}`, recognizer: x.dict.recognizer })
+    // v2.5 4. pont 6.: a központi mentés kötegelve, a diktálás mentésekor (a napi írási korlát elfogyásakor csendben kimarad, később újrapróbálja)
+    void d.syncLearn()
     const macroNotes: { kind: 'update' | 'recommend'; text: string; data: unknown }[] = []
     macroHits.value.forEach(h => {
       const m = d.s.macros.find(v => v.id === h.macroId); if (!m) return
@@ -787,6 +872,9 @@ export const useTreatmentStore = defineStore('treatment', () => {
     const d = dictStore(), conflicts: string[] = []
     let n = 0
     correctionPairs(orig, fixed).forEach(([a, b]) => {
+      // v2.5 4. pont 4.: ha a javított szó egy most lefutott tanult szabály eredménye, a szabály „utólag javítva” számlálója nő
+      const hit = d.s.personal.find(p => (s.value?.seenRules || []).includes(p.id) && norm(p.to) === norm(a))
+      if (hit) hit.corrected = (hit.corrected || 0) + 1
       const cat = guessCat(b, { typeWords: db.value.types.map(t => norm(t.name).split(' ')[0]!), itemWords: db.value.items.map(i => norm(i.name).split(' ')[0]!) })
       const r = d.learn(a, b, { scope: scopeOf(cat), cat, source: 'javitas' })
       if (r) { n++; if (r.conflict) conflicts.push(`„${a}”: korábban „${r.conflict}”, most „${b}”`) }
@@ -803,6 +891,6 @@ export const useTreatmentStore = defineStore('treatment', () => {
     attachments, upload, cancel, hasUnsaved, approve, finishDictation, confirmRow, saveDraft, restored, draftOf, dropDraft,
     setMode, setStatusText, statusDraft, setToothStatus, statusConflicts, approveStatus, discardStatus, isDoneAppt,
     // v2.4
-    aiSoft, takeAiSoft, macroHits, macroOf, macroQuestions, lineOmitted, lineName, setMacroTooth, setMacroOmit, restoreMacroLine, learnedApplied, undoLearned, planMarksNow, setNotDone, learnFromCorrection,
+    aiSoft, takeAiSoft, macroHits, macroOf, macroQuestions, lineOmitted, lineName, setMacroTooth, setMacroOmit, restoreMacroLine, learnedApplied, interpApplied, undoLearned, planMarksNow, setNotDone, learnFromCorrection,
   }
 })

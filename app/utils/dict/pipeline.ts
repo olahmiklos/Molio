@@ -17,6 +17,8 @@ export interface PersonalRule {
   /** hányszor futott le; az első alkalmazás jelölése (fogszám / művelet / anyag módosításánál) */
   uses?: number
   applied?: number
+  /** v2.5 4. pont: hányszor kellett a lefutás után mégis javítani */
+  corrected?: number
 }
 export type FlagKind = 'similar' | 'ambig' | 'repeat' | 'dense' | 'chart' | 'prebooked' | 'qty' | 'ai' | 'life' | 'macro'
 export interface FlagChoice { id: string; label: string; hint?: string }

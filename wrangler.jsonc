@@ -1,6 +1,8 @@
 {
   // Cloudflare: a Molio demó statikus oldalként települ (npx nuxt generate → .output/public),
   // előtte egy kis Worker (worker/index.ts) szolgálja ki az /api/* kéréseket (spec v2.3, 7. pont); minden más kérés a statikus fájlokhoz kerül.
+  // v2.5 1. pont (B-008): a /_nuxt/builds/latest.json kérést is a Worker kapja, és 404-et ad (gyorsítótárazás nélkül), hogy a régi,
+  // még nyitott oldalak se töltsenek újra csendben.
   "name": "molio",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-17",
@@ -10,7 +12,7 @@
     "directory": ".output/public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/_nuxt/builds/latest.json"]
   },
   // A központi javítási napló (spec v2.3, 5. pont) és a napi AI-keret becslése egy Cloudflare KV névteret használ.
   // A névtér a Cloudflare-en létrehozva (2026-11-23); a teszt és a main ág közösen használja (a bejegyzések az ágat is rögzítik).

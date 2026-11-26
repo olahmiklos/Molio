@@ -18,7 +18,7 @@ const shown = computed(() => tx.pendingFlags)
 const learned = computed(() => tx.learnedApplied.filter(l => l.risky && l.first))
 const teeth = computed(() => allTeeth(tx.patient?.dentition || 'permanent'))
 const omitted = computed(() => tx.macroHits.flatMap(h => h.lines.map((l, i) => ({ h, l, i })).filter(x => tx.lineOmitted(x.h, x.i))))
-const interp = computed(() => ({ szabaly: tx.doneItems.map(i => ({ fog: i.tooth, muvelet: i.typeId })), anyagok: tx.rows.filter(r => r.checked).map(r => ({ anyag: r.id, db: r.qty, allapot: r.st })), ai: ai.value.state === 'done' ? { tetelek: ai.value.items, anyagok: ai.value.materials, modell: ai.value.model } : ai.value.state, jelzesek: tx.flags.map(f => f.key), rovidites: tx.macroHits.map(h => ({ nev: h.name, fogak: h.teeth })) }))
+const interp = computed(() => ({ tanultSzabalyok: tx.learnedApplied.map(l => ({ fajta: l.interp ? 'értelmezési' : 'szó', mit: l.rule.from, mire: l.rule.to, kategoria: l.rule.cat, lefutott: l.rule.uses || 0, elsoAlkalmazas: l.first })), visszavonva: s.value.undoRules, szabaly: tx.doneItems.map(i => ({ fog: i.tooth, muvelet: i.typeId })), anyagok: tx.rows.filter(r => r.checked).map(r => ({ anyag: r.id, db: r.qty, allapot: r.st })), ai: ai.value.state === 'done' ? { tetelek: ai.value.items, anyagok: ai.value.materials, modell: ai.value.model } : ai.value.state, jelzesek: tx.flags.map(f => f.key), rovidites: tx.macroHits.map(h => ({ nev: h.name, fogak: h.teeth })) }))
 const typeName = (id: string) => data.db.types.find(t => t.id === id)?.name || id
 </script>
 
@@ -26,10 +26,11 @@ const typeName = (id: string) => data.db.types.find(t => t.id === id)?.name || i
   <div>
     <div v-if="s.dict.noSpeech" class="warn">Nem sikerült megérteni – kérjük, mondja újra.</div>
     <div v-if="ai.state === 'err' && DEV_TOOLS" class="hint small">AI-értelmezés: {{ ai.error }} – a szabályalapú eredmény érvényes.</div>
-    <!-- tanult javítás első alkalmazása (v2.4 6. pont): jelölés és egykoppintásos visszavonás -->
+    <!-- tanult javítás első alkalmazása (v2.4 6. pont, v2.5 4. pont 3.): jelölés „Korábbi javításod alapján” (a main ági egyszerű nézetben is)
+         és egykoppintásos visszavonás; értelmezési szabálynál is (kifejezés → tétel / anyag / fogszám / mennyiség) -->
     <div v-for="l in learned" :key="l.rule.id" class="small row" style="gap:6px;margin:6px 0" data-test="tanult-javitas">
-      <span class="learned-mark">tanult javítás alkalmazva</span> „{{ l.rule.from }}” → „<b>{{ l.rule.to }}</b>”
-      <button class="btn sm" type="button" @click="tx.undoLearned(l.rule.id)">Visszavonás</button>
+      <span class="learned-mark">Korábbi javításod alapján</span> „{{ l.rule.from }}” → <b>{{ l.interp ? l.rule.to : '„' + l.rule.to + '”' }}</b><span v-if="DEV_TOOLS" class="muted"> · {{ l.interp ? 'értelmezési szabály' : 'szószabály' }}, {{ l.rule.cat || '–' }}, első alkalmazás</span>
+      <button class="btn sm" type="button" data-test="tanult-visszavonas" @click="tx.undoLearned(l.rule.id)">Visszavonás</button>
     </div>
     <!-- rövidítésből elhagyott sorok (v2.4 15. pont 4.): halványan, áthúzva megmaradnak, egy koppintással visszaállíthatók -->
     <div v-for="o in omitted" :key="o.h.key + o.i" class="small row" style="gap:6px;margin:4px 0;opacity:.7">

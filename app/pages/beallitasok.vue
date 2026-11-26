@@ -105,7 +105,7 @@ async function resetDemo() {
           <div class="field"><label class="f">Előrejelzési ablak</label><input class="inp" value="60 nap (2 hónap)" disabled></div>
           <div class="field"><label class="f">Tejfogazat javaslata ennyi éves kor alatt</label><input v-model.number="st.primaryAgeLimit" class="inp" type="number" min="1" max="18" @change="saved"></div>
           <div class="field"><label class="f">Ráhagyás a megjelölt pácienseknél</label><select v-model.number="st.patientBuffer" class="inp" @change="saved"><option :value="30">30 perc</option><option :value="60">60 perc</option></select></div>
-          <div class="field"><label class="f">Szervezet</label><input class="inp" :value="`${db.company.name} · ${db.sites[0]?.name} · ${db.rooms[0]?.name}`" disabled></div>
+          <div class="field"><label class="f">Szervezet</label><input class="inp" :value="`${db.company.name} · ${db.sites[0]?.name} · ${(db.rooms.find(r => r.active !== false) || db.rooms[0])?.name}`" disabled></div>
         </div>
         <p class="small muted" style="margin:0">A cím és a telefonszám az értesítő üzenetek sablonjaiban szerepel. A demó egy céget és egy telephelyet kezel; a több telephely a későbbi verzió része (az adatmodell már előkészített).</p>
       </div>
