@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process'
+import { manifestTransform } from './scripts/pwa-manifest.mjs'
 
 // a ténylegesen fordított kód azonosítója: commit, ág és a build ideje (a verziójelzés ebből készül, nem kézzel írt szöveg)
 const sh = (c: string) => { try { return execSync(c, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { return '' } }
@@ -107,6 +108,9 @@ export default defineNuxtConfig({
       cleanupOutdatedCaches: true,
       // a Worker API-végpontjait (diktálás) a service worker nem írhatja felül az oldal-fallbackkel
       navigateFallbackDenylist: [/^\/api\//],
+      // v2.5 1. pont (B-008): a /_nuxt/builds/latest.json nem kerülhet a precache-be (a Worker 404-et ad rá → a service worker
+      // „bad-precaching-response” hibával nem települne); a build után a scripts/check-sw.mjs ellenőrzi
+      manifestTransforms: [manifestTransform('/')],
     },
     // teszt ágon 5 percenként, a main ágon 4 óránként (spec v2.3, 6. pont) és az alkalmazás előtérbe kerülésekor új verziót keres
     client: { installPrompt: false, periodicSyncForUpdates: BUILD.branch === 'main' ? 14400 : 300 },

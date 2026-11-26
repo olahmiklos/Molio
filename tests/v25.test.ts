@@ -108,3 +108,25 @@ describe('v2.5 4. pont: értelmezési javítás tanulása és mérése', () => {
     expect(correctionRate({ uses: 4, corrected: 1 })).toBe(0.25)
   })
 })
+
+describe('v2.5 1. pont (B-008): a service worker precache-listája', () => {
+  it('a /_nuxt/builds/latest.json kimarad, a HTML tiszta URL lesz, a builds/meta megmarad revision nélkül', async () => {
+    // @ts-expect-error – .mjs segédmodul típusdefiníció nélkül
+    const { transformEntries, manifestTransform } = await import('../scripts/pwa-manifest.mjs')
+    const meta = '_nuxt/builds/meta/fe70fbf1-bee5-4639-9fac-eb8dd1f2211b.json'
+    const out = transformEntries([
+      { url: '_nuxt/builds/latest.json', revision: 'x' }, { url: meta, revision: 'y' },
+      { url: 'index.html', revision: 'a' }, { url: '200.html', revision: 'b' }, { url: '_nuxt/app.js', revision: null },
+    ])
+    expect(out.map((e: { url: string }) => e.url)).toEqual([meta, '/', '200', '_nuxt/app.js'])
+    expect(out.find((e: { url: string }) => e.url === meta).revision).toBeNull()
+    const r = await manifestTransform('/')([{ url: '/_nuxt/builds/latest.json', revision: 'x' }])
+    expect(r.manifest).toEqual([])
+  })
+  it('a build utáni ellenőrzés elkapja a latest.json-t és a nem létező elemet', async () => {
+    // @ts-expect-error – .mjs segédmodul típusdefiníció nélkül
+    const { precacheUrls } = await import('../scripts/check-sw.mjs')
+    const src = 'e([{url:`_nuxt/builds/latest.json`,revision:`f8`},{url:`200`,revision:`9f`},{"url":"logo.svg","revision":null}],{})'
+    expect(precacheUrls(src)).toEqual(['_nuxt/builds/latest.json', '200', 'logo.svg'])
+  })
+})
