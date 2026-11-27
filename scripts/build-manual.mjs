@@ -67,8 +67,9 @@ export async function buildManual({ quiet = false } = {}) {
   const outDir = join(ROOT, 'public', 'kezikonyv')
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true })
   const outPdf = join(outDir, 'Molio_felhasznaloi_kezikonyv.pdf')
-  // a Raleway betűkészletben nincs → jel: a menüutakhoz › kerül
-  const blocks = parse(readFileSync(join(ROOT, 'docs', 'kezikonyv.md'), 'utf8').replace(/→/g, '›'))
+  // a Raleway betűkészletben nincs → jel: a menüutakhoz › kerül; a ⚠ és a ♨ jel sincs benne (a PDF-ben üresen maradna):
+  // a PDF-ben a ⚠ helyett „(!)”, a ♨ elmarad (a Súgó oldalon a jelek megmaradnak)
+  const blocks = parse(readFileSync(join(ROOT, 'docs', 'kezikonyv.md'), 'utf8').replace(/→/g, '›').replace(/⚠️?/g, '(!)').replace(/♨️?\s*/g, ''))
 
   const doc = new PDFDocument({ size: 'A4', margins: { top: 64, bottom: 70, left: 62, right: 62 }, bufferPages: true, info: { Title: 'Molio – Felhasználói kézikönyv', Author: 'Molio', Subject: `Molio ${meta.version}` } })
   doc.registerFont('R', font('400Regular'))
