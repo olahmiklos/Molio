@@ -30,6 +30,9 @@ const BARE_SUFFIX = /^(os|es|as|ost|est|ast|ot|et|at|ra|re|on|en|an|nal|nel|tol|
 /** különírt rag-maradék („36 os”) – a régi szűrő listája */
 const LONE_SUFFIX = /^(os|es|as|ost|est|ast|ra|re|on|en|an)$/
 const NUMKEY = /^\d+(\.\d+)?$/
+/** B-022: mértékegységek kiírt és rövidített alakja ugyanaz a szó (milliliter = ml, darab = db); ragozott alakkal is („milliliterrel”) */
+const UNIT_CANON: [RegExp, string][] = [[/^(milli|mili)(liter|l)?[a-z]*$|^cc$|^kobcenti[a-z]*$/, 'ml'], [/^darab[a-z]*$/, 'db']]
+export function unitKey(w: string): string { for (const [re, k] of UNIT_CANON) if (re.test(w)) return k; return w }
 /** a különírt összetett számnév tízes előtagjai (B-020) */
 const TENS_WORDS = new Set(['husz', 'huszon', 'harminc', 'negyven', 'otven', 'hatvan', 'hetven', 'nyolcvan', 'kilencven'])
 /** egy kanonikus szó és az eredeti (ékezetes) alakja a szövegben; a „három egész hat” egy szó (3.6) */
@@ -47,7 +50,7 @@ export function canonSpans(text: string): CanonSpan[] {
     if (dec) {
       const unit = dec[3]!, o = unit ? w.slice(0, w.length - unit.length) : w
       out.push({ key: `${parseInt(dec[1]!, 10)}.${dec[2]}`, orig: o, norm: norm(o) })
-      if (unit && !BARE_SUFFIX.test(unit)) out.push({ key: unit, orig: w.slice(o.length), norm: unit })
+      if (unit && !BARE_SUFFIX.test(unit)) out.push({ key: unitKey(unit), orig: w.slice(o.length), norm: unit })
       continue
     }
     const dg = /^(\d+(?:[.,]\d+)?)-([a-z]+)$/.exec(n)
@@ -67,7 +70,7 @@ export function canonSpans(text: string): CanonSpan[] {
         continue
       }
       const v = wordNumber(pn)
-      out.push({ key: v !== null ? String(v) : pn, orig: p, norm: pn })
+      out.push({ key: v !== null ? String(v) : unitKey(pn), orig: p, norm: pn })
     }
   }
   // B-020: különírt tízes + egyes számnév („harminc hat”, „harminc hatos”, „húsz egy”) → egy szám (36, 21), ahogy a parser (fuseTeeth) is összevonja;
@@ -198,4 +201,9 @@ export function uncertaintyStats(expected: string, heard: string, flagged: strin
   const total = diff.length, wrong = diff.filter(d => !d.ok).length, f = diff.filter(d => isF(d.word))
   const fWrong = f.filter(d => !d.ok).length
   return { precision: f.length ? fWrong / f.length : null, coverage: wrong ? fWrong / wrong : null, share: total ? f.length / total : 0, flagged: f.length, wrong, total }
+}
+
+/** B-022: a megjelenített szövegben szám után a „milliliter” (és változatai) a szokásos „ml” rövidítésre vált („3,6 milliliter” → „3,6 ml”) */
+export function abbreviateUnits(text: string): string {
+  return String(text || '').replace(/(\d(?:[.,]\d+)?(?:-[\p{L}]+)?\s*)(?:milli|mili)liter(?![\p{L}])|(\d(?:[.,]\d+)?\s*)köbcenti(?![\p{L}])/giu, (_m, a, b) => (a ?? b) + 'ml')
 }

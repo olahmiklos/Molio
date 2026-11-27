@@ -5,8 +5,8 @@
 // legfeljebb kb. 15 másodpercig, 3 alkalommal újrapróbálja, utána „A kapcsolat megszakadt – a diktálás nem készült el, mondja újra.”
 import { defineStore } from 'pinia'
 import { DICTATION_LIMIT_S, DEV_TOOLS } from '~/utils/meta'
-import { levelState, prepareAudio, startCapture, toWav, type AudioStats, type Capture, type LevelState, type ResampleMode } from '~/utils/dict/audio'
-import { whisperVerdict } from '~/utils/dict/quality'
+import { levelState, prepareAudio, summaryLevel, startCapture, toWav, type AudioStats, type Capture, type LevelState, type ResampleMode } from '~/utils/dict/audio'
+import { abbreviateUnits, whisperVerdict } from '~/utils/dict/quality'
 import type { PromptStyle } from '~/utils/dict/prompt'
 import { useDictStore } from './dict'
 
@@ -25,7 +25,7 @@ export interface StartCtx { prompt: (style?: PromptStyle) => string; onDone?: (r
 export interface DictDiag {
   at: string
   opts: DictOpts
-  audio?: AudioStats & { inRate: number; avgRms: number; level: LevelState }
+  audio?: AudioStats & { inRate: number; avgRms: number; level: LevelState; liveWorst?: LevelState }
   wav?: { rate: number; channels: number; bytes: number; seconds: number }
   worker?: { ms?: number; bytes?: number; wav?: { ok: boolean; rate: number; channels: number; bits: number; dataBytes: number; seconds: number; headerMatches: boolean; note: string }; vad?: boolean; promptChars?: number; segments?: unknown[]; info?: unknown; keys?: string[] }
   prompt: string
@@ -81,6 +81,9 @@ export const useVoiceStore = defineStore('voice', () => {
   let ctx: StartCtx | null = null
   let hist: { t: number; rms: number; peak: number }[] = []
   let worstLvl: LevelState = 'ok'
+  /** B-021: a teljes felvétel összesített hangerő-minősítése (nem az élő jelzés legrosszabb állapota) */
+  const recLevel = ref<LevelState>('ok')
+  let rmsAll: number[] = [], peakAll: number[] = []
   let rmsSum = 0, rmsN = 0
   let lastWav: Uint8Array | null = null
   let lastRaw: { samples: Float32Array; rate: number } | null = null
@@ -106,7 +109,7 @@ export const useVoiceStore = defineStore('voice', () => {
     const p = dict.eff
     opts = { noise: p.noise, resample: p.resample, promptStyle: p.promptStyle, vad: p.vad, recognizer: p.recognizer, ...(c.opts || {}) }
     base = t.get(); if (base && !/\s$/.test(base)) base += ' '
-    finalText = ''; live.value = ''; previewNote.value = ''; fallbackNote.value = ''; canRetry.value = false; used.value = 'none'; hist = []; lvl.value = 'ok'; level.value = 0; message.value = ''; worstLvl = 'ok'; rmsSum = 0; rmsN = 0
+    finalText = ''; live.value = ''; previewNote.value = ''; fallbackNote.value = ''; canRetry.value = false; used.value = 'none'; hist = []; lvl.value = 'ok'; level.value = 0; message.value = ''; worstLvl = 'ok'; rmsSum = 0; rmsN = 0; rmsAll = []; peakAll = []; recLevel.value = 'ok'
     const wantWhisper = opts.recognizer === 'whisper' && hasMic()
     if (opts.recognizer === 'whisper' && !wantWhisper) fallbackNote.value = 'Alap felismerés – a pontos felismerés most nem elérhető (nincs mikrofon-hozzáférés).'
     micOnly = wantWhisper
@@ -115,7 +118,7 @@ export const useVoiceStore = defineStore('voice', () => {
       try {
         cap = await startCapture({ noise: opts.noise, onLevel: (rms, peak) => {
           level.value = Math.min(1, rms * 9); hist.push({ t: performance.now(), rms, peak }); if (hist.length > 80) hist.shift(); lvl.value = levelState(hist, performance.now())
-          rmsSum += rms; rmsN++; if (RANK[lvl.value] > RANK[worstLvl]) worstLvl = lvl.value
+          rmsSum += rms; rmsN++; rmsAll.push(rms); peakAll.push(peak); if (RANK[lvl.value] > RANK[worstLvl]) worstLvl = lvl.value
         } })
       } catch (e) {
         cap = null
@@ -187,7 +190,8 @@ export const useVoiceStore = defineStore('voice', () => {
     const done = ctx; const t = target
     if (c && micOnly) { void finish(c, msg, done, t); return }
     if (c) void c.stop().catch(() => {})
-    const text = (finalText).trim() || live.value
+    const text = abbreviateUnits((finalText).trim() || live.value)
+    if (rmsAll.length) recLevel.value = summaryLevel(rmsAll, peakAll)
     message.value = msg || (text ? 'Diktálás sikeres – feldolgozom az eredményt…' : 'Nem sikerült megérteni – kérjük, mondja újra.')
     used.value = 'browser'
     const d = newDiag(); d.used = 'browser'; d.fallbackReason = 'a böngésző felismerője volt kiválasztva / a mikrofon nem volt elérhető'; diag.value = d
@@ -213,7 +217,7 @@ export const useVoiceStore = defineStore('voice', () => {
     processing.value = false
     if (res.netFail) { message.value = NET_FAIL_MSG; done?.onDone?.(res); return }
     if (t && !res.noSpeech) t.set(base + res.text)
-    if (res.noSpeech) message.value = worstLvl === 'quiet' ? 'Nem sikerült megérteni – halk volt a hang, beszéljen közelebb a mikrofonhoz.' : 'Nem sikerült megérteni – kérjük, mondja újra.'
+    if (res.noSpeech) message.value = recLevel.value === 'quiet' ? 'Nem sikerült megérteni – halk volt a hang, beszéljen közelebb a mikrofonhoz.' : 'Nem sikerült megérteni – kérjük, mondja újra.'
     else if (res.recognizer === 'whisper') { message.value = msg || 'Diktálás sikeres – feldolgozom az eredményt…'; swapFlash.value++ }
     done?.onDone?.(res)
   }
@@ -221,7 +225,8 @@ export const useVoiceStore = defineStore('voice', () => {
   async function processRaw(raw: { samples: Float32Array; rate: number }, done: StartCtx | null, d: DictDiag): Promise<DictResult> {
     const { pcm, stats } = prepareAudio(raw.samples, raw.rate, { highpassHz: opts.noise ? 90 : 0, normalize: true, resample: opts.resample })
     lastSeconds = stats.seconds
-    d.audio = { ...stats, inRate: raw.rate, avgRms: rmsN ? rmsSum / rmsN : stats.rms, level: worstLvl }
+    recLevel.value = summaryLevel(rmsAll, peakAll, stats)
+    d.audio = { ...stats, inRate: raw.rate, avgRms: rmsN ? rmsSum / rmsN : stats.rms, level: recLevel.value, liveWorst: worstLvl }
     if (stats.speechRatio < 0.03 || stats.peak < 0.01) {
       d.fallbackReason = 'nem érkezett értelmezhető beszéd (csend vagy túl halk)'
       return { text: '', recognizer: 'none', live: live.value, seconds: stats.seconds, noSpeech: true, fallback: false, differs: false }
@@ -242,7 +247,12 @@ export const useVoiceStore = defineStore('voice', () => {
     if (!txt) return { text: '', recognizer: 'none', live: live.value, seconds, noSpeech: true, fallback: true, differs: false, browserFinal: finalText.trim() }
     return { text: txt, recognizer: 'browser', live: live.value, seconds, noSpeech: false, fallback: true, differs: false, browserFinal: finalText.trim() }
   }
+  /** B-022: a felismert szövegben a mértékegység a szokásos rövidítéssel jelenik meg („3,6 milliliter” → „3,6 ml”) */
   async function transcribe(wav: Uint8Array, prompt: string, seconds: number, d: DictDiag): Promise<DictResult> {
+    const r = await transcribeRaw(wav, prompt, seconds, d)
+    return r.text ? { ...r, text: abbreviateUnits(r.text) } : r
+  }
+  async function transcribeRaw(wav: Uint8Array, prompt: string, seconds: number, d: DictDiag): Promise<DictResult> {
     const dict = useDictStore()
     const t0 = Date.now()
     for (let attempt = 1; attempt <= NET_RETRIES; attempt++) {
@@ -307,5 +317,5 @@ export const useVoiceStore = defineStore('voice', () => {
     try { const r = await fetch('/api/diktalas/keret', { headers: { 'x-molio-device': useDictStore().s.deviceId } }); const j = await r.json() as { ok: boolean; leftPct: number | null; model: string }; whisperOk.value = !!j?.ok; const d = useDictStore(); if (j?.ok) { d.aiInfo.leftPct = j.leftPct; d.aiInfo.model = j.model }; return j } catch { whisperOk.value = false; return null }
   }
 
-  return { recording, processing, message, supported, remaining, elapsed, level, lvl, live, previewOn, previewNote, used, fallbackNote, canRetry, swapFlash, whisperOk, diag, lastWavUrl, detect, start, stop, retry, rerun, hasRecording, probe }
+  return { recording, processing, message, supported, remaining, elapsed, level, lvl, recLevel, live, previewOn, previewNote, used, fallbackNote, canRetry, swapFlash, whisperOk, diag, lastWavUrl, detect, start, stop, retry, rerun, hasRecording, probe }
 })

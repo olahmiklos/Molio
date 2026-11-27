@@ -20,7 +20,7 @@ describe('B-020: különírt összetett számnév', () => {
     expect(canonTokens('harminc hat os')).toEqual(['36'])
   })
   it('nem vonja össze, ha nem egyes jön, és a tizedest nem bántja', () => {
-    expect(canonTokens('harminc darab')).toEqual(['30', 'darab'])
+    expect(canonTokens('harminc darab')).toEqual(['30', 'db']) // B-022: darab = db
     expect(canonTokens('három egész hat')).toEqual(['3.6'])
     expect(canonTokens('harminc 6')).toEqual(['30', '6'])
     expect(canonTokens('tíz egy')).toEqual(['10', '1'])

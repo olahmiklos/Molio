@@ -32,18 +32,15 @@ const guide = ref(!dict.trained && typeof window !== 'undefined' && window.inner
 interface Part { id: string; text: string; live: string; browserFinal: string; whisper: string; recognizer: string; seconds: number; noSpeech: boolean; fallback: boolean; quiet: boolean; loud: boolean; none: boolean }
 const parts = reactive<Record<string, Part>>({})
 const cur = ref(''), active = ref('')
-const worst = ref<'ok' | 'quiet' | 'loud' | 'none'>('ok')
-const rank = { ok: 0, quiet: 1, loud: 1, none: 2 }
-watch(() => voice.lvl, l => { if (voice.recording && rank[l as keyof typeof rank] > rank[worst.value]) worst.value = l as typeof worst.value })
 const runId = ref('t' + Date.now().toString(36))
 const step = ref(0)
 
 async function rec(id: string) {
   if (voice.recording && active.value === id) { voice.stop(); return }
   if (voice.recording || voice.processing) return
-  active.value = id; cur.value = ''; worst.value = 'ok'
+  active.value = id; cur.value = ''
   await voice.start({ get: () => cur.value, set: v => { cur.value = v } }, { prompt: (st) => tx.promptText(st), onDone: (r: DictResult) => {
-    parts[id] = { id, text: r.text, live: r.live, browserFinal: r.browserFinal || '', whisper: r.whisper || '', recognizer: r.recognizer, seconds: r.seconds, noSpeech: r.noSpeech || !!r.netFail || !r.text.trim(), fallback: r.fallback, quiet: worst.value === 'quiet', loud: worst.value === 'loud', none: worst.value === 'none' }
+    parts[id] = { id, text: r.text, live: r.live, browserFinal: r.browserFinal || '', whisper: r.whisper || '', recognizer: r.recognizer, seconds: r.seconds, noSpeech: r.noSpeech || !!r.netFail || !r.text.trim(), fallback: r.fallback, quiet: voice.recLevel === 'quiet', loud: voice.recLevel === 'loud', none: voice.recLevel === 'none' }
     autoSave()
   } })
 }

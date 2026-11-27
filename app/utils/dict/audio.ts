@@ -79,6 +79,28 @@ export function levelState(hist: { t: number; rms: number; peak: number }[], now
   return 'ok'
 }
 
+/**
+ * B-021: a teljes felvétel hangerő-minősítése (a próbanaplóba, a betanítás visszajelzésébe, a hibaüzenetbe).
+ * A felvétel élő jelzése (levelState) a beszéd előtti / utáni csendre is „nincs hang” vagy „halk”; az összegzés ezért
+ * csak a beszédes részt nézi: „nincs hang” csak akkor, ha az előkészített hangban nincs értelmezhető beszéd
+ * (ugyanaz a feltétel, mint a „nem érkezett értelmezhető beszéd”); „halk”, ha a leghangosabb (beszédes) részek szintje is alacsony;
+ * „túlvezérelt”, ha a beszédes részek jelentős része vágódik. Tiszta függvény (tesztelhető).
+ */
+export function summaryLevel(rms: number[], peaks: number[], stats?: Pick<AudioStats, 'peak' | 'speechRatio'>): LevelState {
+  if (stats && (stats.peak < 0.01 || stats.speechRatio < 0.03)) return 'none'
+  if (!rms.length) return stats ? 'ok' : 'none'
+  const ratio = Math.min(0.9, Math.max(0.1, stats?.speechRatio ?? 0.3))
+  const k = Math.max(3, Math.round(rms.length * ratio))
+  const idx = rms.map((r, i) => i).sort((a, b) => rms[b]! - rms[a]!).slice(0, k)
+  const top = idx.map(i => rms[i]!).sort((a, b) => a - b)
+  const med = top[Math.floor(top.length / 2)] ?? 0
+  if (!stats && med < 0.002) return 'none'
+  const clipped = idx.filter(i => (peaks[i] ?? 0) > 0.985).length
+  if (clipped >= Math.max(3, idx.length * 0.25)) return 'loud'
+  if (med < 0.012) return 'quiet'
+  return 'ok'
+}
+
 export interface Capture { stop(): Promise<{ samples: Float32Array; rate: number }>; cancel(): void }
 /** mikrofonfelvétel; a hangerőszintet 10 Hz-en jelzi vissza */
 export async function startCapture(o: { noise: boolean; onLevel: (rms: number, peak: number) => void }): Promise<Capture> {
