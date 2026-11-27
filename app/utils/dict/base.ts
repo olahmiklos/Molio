@@ -31,7 +31,7 @@ const CANON: Record<string, string> = {
 /** kétértelmű vagy túl rövid / köznapi alak: nem íródik át csendben (kontextus vagy ⚠ dönt) */
 const NO_AUTO = new Set(['kivettem', 'leszedtem', 'tu', 'tut', 'sav', 'dam', 'tej', 'ep', 'rago', 'laza', 'csavar', 'mod', 'ment', 'na', 'akkor', 'par', 'fel', 'kicsit', 'ek', 'fonal', 'lakk', 'felul', 'alul', 'hipo', 'file', 'fajl', 'gutta', 'mo', 'felvetel', 'szuri', 'injekcio', 'ragaszto', 'tomes', 'tomtem', 'huzas', 'plomba', 'sapka'])
 /** köznapi, de egyértelműen leképezhető alakok pótlása (a NO_AUTO miatt kimaradt fontos szinonimák) */
-const EXTRA: [string, string][] = [['szuri', 'ampulla'], ['injekcio', 'ampulla'], ['plomba', 'tomott'], ['sapka', 'koronas'], ['sapkas', 'koronas'], ['hipo', 'hipoklorit'], ['gutta', 'guttapercha'],
+const EXTRA: [string, string][] = [['szuri', 'ampulla'], ['suri', 'ampulla'], ['injekcio', 'ampulla'], ['plomba', 'tomott'], ['sapka', 'koronas'], ['sapkas', 'koronas'], ['hipo', 'hipoklorit'], ['gutta', 'guttapercha'],
   ['jobb fent', 'jobb felso'], ['jobb lent', 'jobb also'], ['bal fent', 'bal felso'], ['bal lent', 'bal also'], ['meziookkluzalis', 'mezialis okkluzalis'], ['disztookkluzalis', 'disztalis okkluzalis'],
   ['mezio okkluzalis', 'mezialis okkluzalis'], ['diszto okkluzalis', 'disztalis okkluzalis'], ['meziookkluzodisztalis', 'mezialis okkluzalis disztalis'], ['em o de', 'mod'], ['em o', 'mo'], ['de o', 'do'], ['emode', 'mod'], ['emo', 'mo'],
   ['kerem', 'kerek'], ['kesztyut', 'kesztyu']]

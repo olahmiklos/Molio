@@ -30,6 +30,8 @@ const BARE_SUFFIX = /^(os|es|as|ost|est|ast|ot|et|at|ra|re|on|en|an|nal|nel|tol|
 /** különírt rag-maradék („36 os”) – a régi szűrő listája */
 const LONE_SUFFIX = /^(os|es|as|ost|est|ast|ra|re|on|en|an)$/
 const NUMKEY = /^\d+(\.\d+)?$/
+/** a különírt összetett számnév tízes előtagjai (B-020) */
+const TENS_WORDS = new Set(['husz', 'huszon', 'harminc', 'negyven', 'otven', 'hatvan', 'hetven', 'nyolcvan', 'kilencven'])
 /** egy kanonikus szó és az eredeti (ékezetes) alakja a szövegben; a „három egész hat” egy szó (3.6) */
 export interface CanonSpan { key: string; orig: string; norm: string }
 /**
@@ -68,6 +70,20 @@ export function canonSpans(text: string): CanonSpan[] {
       out.push({ key: v !== null ? String(v) : pn, orig: p, norm: pn })
     }
   }
+  // B-020: különírt tízes + egyes számnév („harminc hat”, „harminc hatos”, „húsz egy”) → egy szám (36, 21), ahogy a parser (fuseTeeth) is összevonja;
+  // csak ha a tízes után ragozott vagy ragozatlan egyes számnév jön („harminc darab” marad); a „tíz” nem tízes-előtag („tíz, egy” felsorolás)
+  const fused: CanonSpan[] = []
+  for (let i = 0; i < out.length; i++) {
+    const a = out[i]!, b = out[i + 1]
+    if (b && TENS_WORDS.has(a.norm) && !/\d/.test(b.norm)) {
+      const u = wordNumber(b.norm), v = wordNumber(a.norm + b.norm)
+      if (u !== null && u >= 1 && u <= 9 && v !== null && v === Number(a.key) + u) {
+        fused.push({ key: String(v), orig: `${a.orig} ${b.orig}`, norm: `${a.norm} ${b.norm}` }); i++; continue
+      }
+    }
+    fused.push(a)
+  }
+  out.splice(0, out.length, ...fused)
   // „három egész hat”, „három vessző hat (tized)” → 3.6
   const res: CanonSpan[] = []
   for (let i = 0; i < out.length; i++) {
