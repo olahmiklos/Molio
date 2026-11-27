@@ -10,6 +10,7 @@ A Molio fogorvosi rendelőkezelő program. Célja, hogy a fogorvosnak és az ass
 - A demó a kitalált **Cooldent Kft.** adataival indul: egy telephely, egy rendelő, két fogorvos (Dr. Csempesz és Dr. Oláh), tíz minta-páciens.
 - A diktálás a böngésző beépített magyar beszédfelismerését használja, és szabályok alapján tölti ki a mezőket. A mesterséges intelligenciával készülő összefoglalók a végleges verzióban lesznek elérhetők.
 - A mintaadatok a **Beállítások → Klinika → Visszaállítás alaphelyzetbe** gombbal bármikor visszaállíthatók.
+- **(v2.4)** A bemutató a látogatás idejét és az IP-címet naplózza; erre a demó sávja és a kezelés képernyő is figyelmeztet.
 
 ## Ajánlott eszközök és böngészők
 
@@ -24,16 +25,22 @@ A Molio alkalmazásként is telepíthető. iPhone-on és iPaden: Safari → Mego
 
 # A felület
 
-A felső menüsor (telefonon az alsó sáv) a fő részeket nyitja meg: **Naptár, Páciensek, Kezelés, Emlékeztetők, Raktár, Sterilizálás, Beállítások**. A legfelső sávban és a lap alján a **Súgó és kézikönyv** link vezet ehhez a kézikönyvhöz.
+A felső menüsor (telefonon az alsó sáv) a fő részeket nyitja meg: **Naptár, Páciensek, Kezelés, Teendők, Raktár, Sterilizálás, Beállítások**.
+
+**Súgó és kézikönyv (v2.4):** a fejléc rendelői adatsora (cím, telefon, rendelési idő, Súgó link) megszűnt. A Súgó a **Beállítások** lap tetején lévő **? Súgó és kézikönyv** sorból nyílik (innen tölthető le a PDF-kézikönyv is); a lap alján a **Felhasználói kézikönyv (PDF)** link is ide vezet.
+
 
 - A zöld **demó sáv** emlékeztet, hogy az adatok csak ezen az eszközön tárolódnak.
 - Ha a raktárban valamit sürgősen meg kell rendelni, a menü alatt **narancssárga sáv** jelenik meg; rákattintva a Raktár nyílik meg.
 - Ha folyamatban van egy kezelés, a Kezelés menüpont mellett rózsaszín pötty látszik.
+- **(v2.4)** A **Teendők** menüpont jelvénye mutatja a kezelendő tételek számát (időpont-ütközések, jóváhagyásra váró tájékoztatók, beosztáson kívüli időpontok, lemondást jelzők); fölé állva látszik a bontás.
 - A legtöbb ablak az Esc billentyűvel vagy a jobb felső × gombbal zárható be.
 
 # Naptár és időpontfoglalás
 
 A naptár a két orvos időpontjait mutatja napi, heti és havi nézetben. Minden kezeléstípusnak saját színe van.
+
+**Beosztás szerinti foglalás (v2.4):** időpont csak akkor foglalható, ha az orvos a beosztása szerint rendel (alapbeállítás: kedd–péntek 10:00–20:00, lásd Beállítások → Klinika → Beosztás). A beosztáson kívüli sáv a naptárban csíkozott, nem kattintható; fölé állva látszik az ok. Ha a foglalás (a kezelés és a ráhagyás együtt) a rendelési időn kívülre esne, a foglalás ablaka figyelmeztet, és gombként felkínálja a **legközelebbi rendelési időt szabad hellyel**. Sürgős esetben a **Sürgős eset – a tiltás felülbírálása** jelölővel, kötelező indoklással mégis menthető; ez naplózódik, és az időpont ablakában is látszik.
 
 ## Időpont foglalása
 
@@ -54,6 +61,29 @@ Ha a páciensnek vannak javasolt, még be nem ütemezett kezelései, a foglalás
 ## Időpont törlése, összevonása (v2.2)
 
 A jövőbeli időpont **Lemondás** vagy **Törlés** gombja kötelező okot kér, és megkérdezi, mi legyen a javasolt kezelésekkel (visszakerülnek a Teendők közé, vagy átkerülnek a páciens másik időpontjára). A törölt időpont a kartonon **30 napig visszaállítható**, a törlés után pedig a **Visszavonás** gombbal azonnal is. Az **Összevonás** a páciens két időpontját vonja egybe (eltérő orvosnál te döntöd el, ki marad), a **Tételek áthelyezése** egyes tételeket visz át a másik időpontra.
+
+**Törlés és lemondás (v2.4):**
+
+- A gombok az időpont ablakán kívül az **időpont szerkesztő ablakában** is megvannak (**Törlés (téves rögzítés)** és **Lemondás**, jövőbeli, még nem rögzített kezelésű időpontnál), valamint a páciens kartonján, a Kezelések → Következő kezelések részben az időpont sorában (**Törlés**, a **Szerkesztés** mellett).
+- A megerősítő ablak felsorolja az időpont összes tételét, és háromféle sorsot kínál: **vissza „javasolt – még nincs időpont” állapotba** (Teendők → Egyeztetendő kezelések), **átkerülnek a páciens másik jövőbeli időpontjára**, vagy **törlés a tételekkel együtt**.
+- Ha a páciens erről az időpontról már kapott értesítést, a program megkérdezi, küldjön-e értesítést a lemondásról vagy törlésről (a demóban tényleges küldés nélkül).
+
+## Ha a páciensnek ekkor már van időpontja – összevonás (v2.4)
+
+Ha ugyanannak a páciensnek az új foglalás ideje átfed egy meglévő időpontjával, **A páciensnek ekkor már van időpontja** ablak jelenik meg:
+
+- **Összevonás egy időponttá** (alapértelmezett): az új kezelés a meglévő időpontba kerül; a kezdés marad, az időtartam a két kezelés összege, a ráhagyás a nagyobbik. Eltérő orvosnál a program megkérdezi, melyik orvos maradjon (egy időponthoz egy orvos tartozik). Ha az összevont időpont ütközne a következővel vagy túllógna a rendelési időn, a program felajánlja aznap a legközelebbi megfelelő kezdést (**Áthelyezés**); ha nincs ilyen, másik napot vagy külön időpontot kell választani.
+- **Külön időpont:** az új foglalás külön, ütköző időpontként mentődik (a naptárban egymás mellett látszik, és „Időpont-ütközés” teendő keletkezik).
+- **Vissza:** semmi nem mentődik.
+
+Az összevonás és a külön foglalás is visszavonható az utána megjelenő üzenet **Visszavonás** gombjával. Ha a páciens a meglévő időpontról már kapott értesítést, a program rákérdez, küldjön-e értesítést a módosításról (a demóban szimulált).
+
+## Ütköző időpontok (v2.4)
+
+- Az egymással átfedő időpontok a naptárban **egymás mellett**, egyenlő szélességű sávokban látszanak, dupla felkiáltójellel és piros kerettel. Szaggatott a keret, ha csak a ráhagyás fedi át a másikat; halvány a jelzés, ha az átfedést szándékosnak jelölték.
+- Ha van kezelendő ütközés, a naptár fölött sáv jelzi: **„N időpont-ütközés – kezelendő”**; rákattintva a Teendők ütközés-listája nyílik meg.
+- Az időpont ablakában elöl látszik, kivel ütközik (**Ütközik** / **A ráhagyás ütközik**); **Az ütköző időpont megnyitása** gomb a másik időpontot nyitja meg, a **Szándékos átfedés** gomb jóváhagyja az átfedést (például két szék, két asszisztens).
+- A Teendők között minden ütközés **Időpont-ütközés** teendőként jelenik meg, lásd a Teendők fejezetet.
 
 ## Ráhagyási idő
 
@@ -78,18 +108,30 @@ A **Páciensek** listában névre, telefonszámra vagy TAJ-számra lehet keresni
 ## A kezelések melletti jelzések
 
 - **EESZT:** beküldésre vár / beküldve. Rákattintva látszik, mi kerülne a jelentésbe.
-- **Tájékoztató:** a páciensnek szóló összefoglaló állapota (jóváhagyásra vár, jóváhagyva, elküldve).
+- **Tájékoztató:** a páciensnek szóló összefoglaló állapota (jóváhagyásra vár, jóváhagyva, elküldve). **(v2.4)** Ha a páciens e-mailes értesítést kér, a jelzés a jóváhagyási sor állapotát mutatja: **tájékoztató: az orvos jóváhagyására vár**, **tájékoztató kiküldve (e-mail)** a dátummal, vagy **tájékoztató: nem került kiküldésre** (lejárt jóváhagyás nélkül, vagy az orvos nem tartotta szükségesnek); rákattintva a Teendők → Jóváhagyásra váró tájékoztatók nyílik meg.
+- **Nem történt meg (v2.4):** ha a „Mai feladat” egyik tervezett tételét „nem történt meg” jelöléssel mentetted, a kezelés alatt piros sor mutatja (a megjegyzéssel), és a következő alkalom „következő lépéseként” jelenik meg.
 - **♨ S-…:** a kezeléshez használt sterilizált műszercsomag tételszáma.
 - **LOT:** a nyomon követett anyagok gyártási száma.
 - **Anyagköltség:** a felhasznált anyagok értéke átlagáron.
 
 A nap fejlécében a **Számla előkészítése** és a **PDF ügyfélkarton** gomb található.
 
+**(v2.4)** A kartonon a **Kezelések → Következő kezelések** részben az előjegyzett időpontok és a javasolt kezelések sorában **Kezelés indítása** gomb is van: a kezelés innen indítva is a „Mai feladat” összefoglalóval nyílik. Ha egy másik kezelés még folyamatban van, a program megkérdezi, elveted-e. Az időpont sorában a **Törlés** gomb a teljes időpontot törli (lásd Időpont törlése).
+
 # Kezelés diktálással
 
 ## A kezelés indítása
 
-A kezelés a naptárban egy időpontra kattintva (**Kezelés indítása**), vagy a páciens kartonjáról az **Új kezelés** gombbal indul. Időpontból indítva a páciens, a kezelés típusa és a tervezett fog/felszín automatikusan átkerül.
+A kezelés a naptárban egy időpontra kattintva (**Kezelés indítása**), vagy a páciens kartonjáról az **Új kezelés** gombbal indul. Időpontból indítva a páciens, a kezelés típusa és a tervezett fog/felszín automatikusan átkerül. **(v2.4)** A páciens kartonjáról az időpont vagy a javasolt kezelés sorában lévő **Kezelés indítása** gombbal is indítható.
+
+## Mai feladat (v2.4)
+
+A kezelés képernyő legfelső sávjában, a **Diktálás** gomb mellett a **Mai feladat** rövid összefoglalója látszik: a tervezett tételek, mellettük az állapotuk (pipával **elvégezve**, **még nincs rögzítve**, **nem történt meg**), több tételnél a „kész” számláló. Ha nincs előre tervezett kezelés, ezt írja ki; a mai kezelés ilyenkor diktálással rögzíthető. A páciens kiemelt egészségügyi figyelmeztetése lenyitás nélkül is mindig látszik.
+
+- A **Részletek** gomb lenyitja: a páciens, az időpont (dátum, idő, időtartam, orvos), az időponthoz rögzített megjegyzés és az előző alkalom „következő lépése”. Innen nyílik **Az időpont teljes összefoglalója** is.
+- Ha egy tervezett tétel szándékosan elmarad, a sorában a **Nem történt meg** gombbal jelölheted, rövid megjegyzéssel (nem kötelező); a **Visszavonás** gomb törli a jelölést. Az elmaradt tétel a következő alkalom összefoglalójában „következő lépésként” jelenik meg.
+- A jelölés csak tájékoztat: a mentést nem blokkolja, és a diktálás tartalmát nem módosítja. A terv nem töltődik be magától az eredménybe – ami elkészült, azt diktálni vagy rögzíteni kell.
+- A sáv új kezelésnél látszik; státuszfelvételnél és lezárt kezelés szerkesztésénél egy rövid tájékoztató sor áll a helyén.
 
 ## Diktálás
 
@@ -115,9 +157,22 @@ A program felismeri:
 - **AI-értelmezés (kísérleti):** a diktálás sávjában kapcsolóval bekapcsolható; eltérésnél ⚠ jelzi, melyik értelmezést választod.
 - **Diktálás betanítása:** a Beállítások → Diktálás betanítása lapon felolvasható szakaszokból (kb. 2 perc) a program megméri a pontosságot ezen az eszközön, és személyes javításokat javasol, amelyeket egyenként jóváhagyhatsz. Az eredmény csak ezen az eszközön érvényes.
 
-A teljes szöveg kezelési jegyzetként megmarad, és bármikor javítható. Ha nincs beszédfelismerés, a szöveg begépelhető, vagy a **Minta diktálás beszúrása** listából kipróbálható.
+### Egyszerű nézet és automatikus felismerő-váltás (v2.4)
+
+A fogorvosoknak szóló (main ági) változatban a diktálás rögzített beállítással fut: a felismerőt, a zajszűrést és a többi technikai beállítást nem kell (és nem lehet) állítani, ezek csak új kiadással változnak. A v2.3-ban leírt felismerő-választó, élő előnézet, zajszűrés- és érzékenység-kapcsoló ezért ebben a nézetben nem látszik.
+
+- **Egyszerű állapotüzenetek:** felvétel közben „Hallgatlak…”, egyszerű hangerőjelző és a hátralévő idő; tanács csak halk („Halk a hang – beszéljen közelebb a mikrofonhoz”), túl hangos vagy hiányzó hang esetén. Leállítás után „Diktálás sikeres – feldolgozom az eredményt…”; ha nem volt értelmezhető beszéd: „Nem sikerült megérteni – kérjük, mondja újra.”
+- **Automatikus váltás:** a pontos felismerés mellett a böngésző felismerője a háttérben fut. Ha a pontos felismerés értelmetlen vagy használhatatlan szöveget ad, a program magától a böngésző szövegét használja, és ezt halvány sor jelzi („Alap felismerés – a pontos felismerés most nem adott használható szöveget.”). Teendőd nincs.
+- **Hálózat nélkül** a Diktálás gomb inaktív, és üzenet jelzi: „Nincs hálózati kapcsolat – a diktálás most nem érhető el. A kezelést kézzel is rögzítheti.” Ha diktálás közben szakad meg a kapcsolat, a program kb. 15 másodpercen belül legfeljebb háromszor újrapróbálja; ha ez sem sikerül: „A kapcsolat megszakadt – a diktálás nem készült el, mondja újra.”
+- **AI-értelmezés:** alapból bekapcsolva; a diktálás sávjában a kapcsolóval kikapcsolható, a mellette lévő **i** (tájékoztató) gomb rövid magyarázatot ad. Ha a napi AI-keret elfogy, a kapcsoló kikapcsol, a diktálás AI nélkül működik tovább.
+
+ a szöveg begépelhető, vagy a **Minta diktálás beszúrása** listából kipróbálható.
 
 ## Ellenőrzés
+
+**Az ellenőrzés helye (v2.4):** a ⚠ ellenőrizendő sorok a **Diktálás és jegyzet** részben, közvetlenül a diktált szöveg alatt jelennek meg – csak akkor, ha van ilyen; a rész fejlécében pötty mutatja a számukat. A **Nem ezt mondtam** gomb a rész fejlécének jobb oldalán van. Alatta a fogtérkép és a **Kezelési tételek**, közvetlenül utána a **Felhasznált anyagok** következik.
+
+**Csak a kockázatos eltérés kérdez (v2.4):** az AI és a szabályok eltérése csak kockázatos esetben kap ⚠ jelzést. Kisebb eltérésnél az anyag mennyisége mellett halvány **AI: …** gomb jelenik meg; rákoppintva átveszed az AI értékét. A kézzel javított érték miatt a program nem kérdez újra.
 
 - **Fogtérkép:** a felismert fog kijelölődik. Kattintással kijelölhetsz vagy levehetsz fogat, a kijelölt fognál a felszínek is kattinthatók.
 - **Kezelés közben bővítve:** ha a foglaláskor tervezettnél több felszínt kezelsz, a program jelzi; a díj és az anyag a kezelt felszínek szerint számolódik.
@@ -145,7 +200,18 @@ A **Jóváhagyás és mentés** gomb után:
 
 Egy korábbi kezelés a kartonon a **Szerkesztés** gombbal módosítható; a különbözet a raktárban korrekcióként jelenik meg.
 
-## Tanult javítások és értelmezések (v2.5)
+## Rövidítések (v2.4)
+
+A rövidítés egy szóval előhívott tételcsoport (műveletek és anyagok mennyiséggel), például „szokásos kontroll”. A nevét kimondva a diktálásban a tételek normál sorként jelennek meg („rövidítésből: …” jelöléssel), és szerkeszthetők. A rövidítés személyes, és nem tartalmaz betegadatot.
+
+- **Módosítás ugyanabban a mondatban:** fogszám („… a 36-osra”), kiegészítés („…, plusz két tampon”), mennyiség felülírása („…, érzéstelenítés két ampulla”), elhagyás („…, de polírozás nélkül”). Az elhagyott sor áthúzva megmarad, és a **Visszaállítás** gombbal visszahozható. Ha a fogszámhoz kötött műveletnél nem hangzik el fog, ⚠ sor kérdezi: **Melyik fog?**; ha a „nélkül” több tételre is illik, a program megkérdezi, melyik maradjon ki.
+- **Létrehozás:** a **Diktálás és jegyzet** részben a **Mentés rövidítésként** gombbal a mostani eredményből, vagy a **Beállítások → Diktálás → Rövidítéseim → + Új rövidítés** gombbal kézzel. Az ablakban megadod a nevet (gépelve, vagy a **Név diktálása** gombbal), a további elhangzó alakokat (vesszővel), és kijelölöd a tételeket; a katalógusból és a raktárlistából újak vehetők fel. **Rövidítés mentése** után a következő diktálástól él.
+- **Ajánlás:** ha egy kombinációt 30 napon belül háromszor mentesz, a mentés után a program felajánlja: „Gyakran diktálod ezt a csoportot – rövidítést készítsek belőle?” (**Rövidítést készítek**). Ha egy rövidítés anyagmennyiségét többször ugyanúgy módosítod, felajánlja az alapérték frissítését (**Frissítem**).
+- **Rövidítéseim:** a Beállítások → Diktálás lapon a lista mutatja a nevet, az elhangzó alakokat, a tételeket és a használatot; a rövidítés ki-be kapcsolható, szerkeszthető, törölhető. A **hibás** jelölés azt mutatja, hogy egyik tétele már nem létezik.
+
+## Tanult javítások és értelmezések (v2.4, v2.5)
+
+- **(v2.4)** A program a kijavított szóból önállóan tanul: a kiejtési javítás csak rád vonatkozik, a szakmai a rendelő minden felhasználójára. A tanult javítások központilag is mentődnek, így eszközcsere után is visszatölthetők; a main ágon tanultak a teszt ágon is érvényesek, fordítva nem.
 
 - Ha kijavítasz egy félreértett szót („Nem ezt mondtam”, vagy a ⚠ sor választása), a program a következő diktálástól magától javítja.
 - Ha a szöveg jó volt, de a program rosszul értelmezte (pl. kézzel átírod a mennyiséget, a ⚠ sorban másik fogat vagy anyagot választasz), a javításból **értelmezési szabály** lesz, pl. „kérek öt tampont” → Vattatampon 5 db. Ez a rendelő minden felhasználójára érvényes.
@@ -208,6 +274,7 @@ A kulcskérdés nem az, hogy hasonlít-e a két szó, hanem ez: **előfordulhat,
 - A szakaszok mellett százalék látszik, felismerőnként feliratozva (pl. „Whisper: 80% – böngésző: 70%”): mindegyik a saját felirata szerinti felismerőre vonatkozik; a jobbat a program magától kezeli.
 - A szavas minősítés határai: jó 90% felett, közepes 75–89%, gyenge 75% alatt.
 - Az Összefoglalóban a felismerőnkénti és a kategóriánkénti százalék, az Előzményekben a felismerő és a zajszűrés is látszik; a „Fejlesztői részletek” panel a nyers szövegeket mutatja.
+- **(v2.4)** A teszt ágon ezen felül a Beállítások → Diktálás lapon próbabeállítások, a Beállításokban külön **Diktálás-labor** fül, a kezelés képernyőn **Fejlesztői részletek** panel, a Névjegyben a **Látogatások** nézet érhető el. Ezek a main ágon nem jelennek meg, a fogorvosnak nincs velük teendője.
 
 # Páciens-tájékoztató orvosi jóváhagyással
 
@@ -219,6 +286,16 @@ A program minden jóváhagyott kezelésből közérthető összefoglalót kész�
 4. Válaszd ki a csatornát (SMS, e-mail), és küldd el.
 
 Ha a jóváhagyott szöveget módosítod, újra jóvá kell hagyni. A demóban a szöveg sablon alapján készül, és a küldés szimulált. A végleges verzióban a vázlatot a mesterséges intelligencia írja a diktálásból, de a jóváhagyás ott is kötelező.
+
+## Jóváhagyásra váró tájékoztatók (v2.4)
+
+Ha a páciens e-mailes értesítést kér, és van e-mail-címe, a kezelés mentése után a tájékoztató a **Teendők → Jóváhagyásra váró tájékoztatók** lapra kerül, az orvos jóváhagyására. Ha ilyen van, a Naptár fölött sáv jelzi („N tájékoztató vár jóváhagyásra”), és a Teendők jelvényében is számolódik.
+
+1. A **Nézet** választóban válaszd ki az orvost (orvosi nézet: jóváhagyhat), vagy az **Asszisztens – csak az állapot** nézetet.
+2. Egy sorra kattintva lenyílik a szöveg. Gombok: **Jóváhagyás és küldés** (e-mailben megy ki), **Szerkesztés** / **Szerkesztés kész**, **Nem szükséges** (indoklás nem kötelező, majd megerősítés), **Megnyitás** (a páciens kartonja).
+3. Ha 7 napon belül nincs jóváhagyás, a tájékoztató az **Archívum** nézetbe kerül „nem került kiküldésre” állapottal, és nem megy ki. Onnan a **Visszahozás jóváhagyásra** gombbal új, 7 napos határidővel visszahozható (ekkor sem megy ki semmi).
+
+Tömeges jóváhagyás nincs, hogy az orvos valóban elolvassa, mi megy ki. Minden lépés naplózódik. A demóban a küldés szimulált, valódi e-mail nem megy ki.
 
 # Beleegyező nyilatkozat tableten
 
@@ -232,6 +309,12 @@ Ha a jóváhagyott szöveget módosítod, újra jóvá kell hagyni. A demóban a
 # Teendők, emlékeztetők és kontroll-meghívók
 
 A **Teendők** menü (korábban Emlékeztetők) egységes listába gyűjti az asszisztens feladatait: egyeztetendő időpontok (javasolt kezelések), kiküldendő tájékoztatók, esedékes kontrollok, lemondást jelzett időpontok és a páciensek üzenetei; típus, orvos és sürgősség szerint szűrhető. A raktári teendők a Raktár menüben maradnak. **Tájékoztató** csak rögzített időponthoz küldhető (időpont, javasolt kezelések közérthető felsorolása, forrás-kezelés); időpont nélkül kézzel indítható udvarias, **időpont-egyeztetést kérő** üzenet. A küldés a demóban szimulált.
+
+**Új teendőtípusok (v2.4):**
+
+- **Időpont-ütközés:** az átfedő időpontok. **Megnyitás** (a naptár napi nézetében kiemelve mutatja az ütköző időpontokat), **Áthelyezés…** (melyik időpontot), **Értesítés kiküldése…** (kinek), **Szándékos átfedés** (például két szék, két asszisztens – a feladat lezárul, a naptárban halványabb jelzés marad).
+- **Időpont a beosztáson kívül:** olyan jövőbeli időpont, amely az orvos beosztása szerint rendelési időn kívül esik (és nem sürgős felülbírálással készült): **Áthelyezés** vagy **Értesítés**. Az időpont ablakában is figyelmeztetés látszik.
+- **Tájékoztató jóváhagyásra vár:** az orvosnak; az **Elolvasás** gomb a Jóváhagyásra váró tájékoztatók lapot nyitja meg.
 
 ## Időpontok és kockázat
 
@@ -317,10 +400,17 @@ A páciens kartonján a nap fejlécében lévő **Számla előkészítése** gom
 
 A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („Demó v2.5 – a specifikáció v2.5 alapján készült”), a build idejét és a kódazonosítót, a használt felismerőt és AI-modellt, a diktálás-értelmezés pontossági mérését (tesztkészlet, az előző kiadáshoz képest), itt van a **Frissítés keresése** gomb és a másolható verzióadat (hibabejelentéshez). A teszt- és a demókörnyezetet jelölés különbözteti meg.
 
-- **Klinika:** név, cím, telefon, rendelési idő, a tejfogazat javaslatának korhatára, a ráhagyás hossza, a mintaadatok visszaállítása. A **Beosztás → Rendelő (alaprajz)** részben új rendelő vehető fel (automatikus sorszámozott névvel, pl. „3. rendelő”, átírható), a rendelő, a váróterem és az egyéb helyiségek a **Törlés** gombbal törölhetők (megerősítéssel). Ha a rendelőhöz orvos vagy jövőbeli időpont tartozik, előbb át kell rendelni; ha csak múltbeli adat kapcsolódik hozzá, törlés helyett inaktiválható (az alaprajzról és a választókból eltűnik, a múltbeli adatokban megmarad).
+- **Súgó és kézikönyv (v2.4):** a Beállítások lap tetején lévő sor a Súgót és a letölthető PDF-kézikönyvet nyitja meg.
+- **Klinika:** név, cím, telefon, a naptár első és utolsó sávja (v2.4: a rendelési időt a beosztás adja), a tejfogazat javaslatának korhatára, a ráhagyás hossza, a mintaadatok visszaállítása.
+- **Klinika → Beosztás (v2.4):** három rész, felül a megtekintett nap választójával. Időpont csak akkor foglalható, ha az orvos a beosztás szerint rendel; alapbeállítás kedd–péntek 10:00–20:00, ettől napra vagy időszakra el lehet térni. Az asszisztens- és a recepciós-beosztás nem tilt, csak jelez. A demóban mindenki szerkesztheti.
+- **Rendelő (alaprajz):** a rendelők minta-alaprajza a hozzájuk rendelt orvosokkal, rendelési idejükkel és asszisztenseikkel, a recepciós pult és a váróterem. Jelzi, ha nincs recepciós, vagy egy asszisztens egyszerre két helyen van. Alatta a rendelőszobák és a várótermek listája (név átírható, **+ Rendelőszoba**, **+ Váróterem**).
+- **Orvosok és asszisztensek:** orvosonként név, naptárszín, rendelő, aktív/inaktív, az asszisztensek kijelölése, a **Heti sablon szerkesztése** és a **Napi eltérések** két hétre (egy napra koppintva: időszakok megadása, **Vissza az alapbeosztásra**, **Nincs rendelés**, **Mentés**). Az adott napra asszisztens választható; jelzés, ha egy rendelési napon nincs asszisztens. **+ Orvos hozzáadása**, az asszisztensek listája (**+ Asszisztens**).
+- **Recepció:** ki mikor ül a recepciós pultnál: heti sablon és napi eltérés, alatta a lefedettség (van-e a rendelési időben recepciós).
+- A **Beosztás → Rendelő (alaprajz)** részben új rendelő vehető fel (automatikus sorszámozott névvel, pl. „3. rendelő”, átírható), a rendelő, a váróterem és az egyéb helyiségek a **Törlés** gombbal törölhetők (megerősítéssel). Ha a rendelőhöz orvos vagy jövőbeli időpont tartozik, előbb át kell rendelni; ha csak múltbeli adat kapcsolódik hozzá, törlés helyett inaktiválható (az alaprajzról és a választókból eltűnik, a múltbeli adatokban megmarad).
 - **Értesítések:** az alapértelmezett emlékeztető és az SMS-, e-mail-sablonok előnézettel.
 - **Kezelési csomagok:** kezeléstípusonként az alapidő, a ráhagyás, a díj (tömésnél felszínszám szerint), a kontroll-meghívó időköze, a beleegyező nyilatkozat sablonja, a szín, a diktálási kulcsszavak és az anyagcsomag (alkalmanként, foganként vagy felszínenként). 
 - **Diktálás (v2.3):** felismerő-választó (pontos / alap), élő előnézet, zajszűrés, hasonlósági érzékenység, AI-értelmezés kapcsoló, az AI hozzáadott értéke és az „Így diktálj” súgó.
+- **Diktálás (v2.4, egyszerű nézet):** a fogorvosoknak szóló változatban a lapon csak az **AI-értelmezés** kapcsolója (alapból bekapcsolva), a **Rövidítéseim** (lásd Rövidítések), a **Tanult javítások** és **Tanult értelmezések**, valamint az **Így diktálj** súgó látszik, a **Diktálás betanítása** indításával. A felismerés technikai beállításai rögzítettek.
 - **Diktálás betanítása:** hangpróba szakaszonként, visszajelzés, javaslatok egyenkénti jóváhagyása, előzmények – részletesen a „Diktálás betanítása – lépésről lépésre” fejezetben.
 - **Kódtáblák és szinonimák:** szinonimatábla, kódtáblák, a **fogazati státusz felismerési szótára** (korábban a Kezelési csomagoknál), a diktálási **alapszótár**, **személyes javítások**, kitaláció-szűrő, **ismeretlen kifejezések** (egy lépésben hozzárendelhetők), összeférhetőségi szabályok, tanult szabályok és a javítási napló.
 - **Anyag-törzsadatok:** anyagcsoportok és anyagok, beszállító, beszerzési idő, átlagár, célkészlet.
@@ -332,7 +422,9 @@ A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („De
 
 **Miért nem látom a másik gépen rögzített adatot?** A demó az adatokat csak abban a böngészőben tárolja, ahol rögzítetted. A végleges rendszerben az adatok központi adatbázisban lesznek.
 
-**Nem működik a diktálás.** Ellenőrizd, hogy a böngésző engedélyt kapott-e a mikrofonhoz, és hogy van-e internetkapcsolat (a beszédfelismeréshez szükséges). Firefoxban nincs beszédfelismerés; ott gépeld be a szöveget.
+**Nem működik a diktálás.** Ellenőrizd, hogy a böngésző engedélyt kapott-e a mikrofonhoz, és hogy van-e internetkapcsolat (a beszédfelismeréshez szükséges). Firefoxban nincs beszédfelismerés; ott gépeld be a szöveget. **(v2.4)** Hálózat nélkül a Diktálás gomb inaktív; a kezelés ilyenkor kézzel rögzíthető.
+
+**Miért nem tudok egy sávra időpontot foglalni? (v2.4)** A csíkozott sáv az orvos beosztásán kívül esik. A beosztás a Beállítások → Klinika → Beosztás részben módosítható; sürgős esetben a foglalás ablakában indoklással felülbírálható.
 
 **Elírtam egy anyagmennyiséget a jóváhagyás után.** Nyisd meg a kezelést a kartonon a **Szerkesztés** gombbal, javítsd, és hagyd jóvá újra. A raktár a különbözettel korrigál.
 
@@ -349,6 +441,18 @@ A **Beállítások → Névjegy / Verzió** mutatja a program verzióját („De
 - Rendelő, váróterem és egyéb helyiség törlése a Klinika → Beosztás → Rendelő (alaprajz) részben; inaktiválás múltbeli adatnál.
 - Értelmezési javítások tanulása és mérése („Korábbi javításod alapján” jelölés, visszavonás, összesítő a Tanult szabályok fülön).
 - Hibajavítás (B-015): az alaprajz rács elrendezésű, az elemek tetszőleges számú rendelőnél sem csúsznak egymásra.
+
+## 2.4
+
+- Egyszerű, rögzített beállítású diktálás a fogorvosnak; automatikus váltás a böngésző szövegére, ha a pontos felismerés nem ad használható szöveget; hálózat nélkül a diktálás nem indul, kapcsolatvesztésnél újrapróbálás.
+- „Mai feladat” összefoglaló a diktálás gomb mellett, „nem történt meg” jelöléssel; kezelés indítása a páciens kartonjáról.
+- Az ellenőrzés a „Diktálás és jegyzet” részben; csak a kockázatos eltérés kérdez (⚠), a kisebb AI-eltérés halvány jelzés; AI-értelmezés alapból bekapcsolva.
+- Öntanuló javítások központi mentéssel, első alkalmazáskor jelöléssel és visszavonással; személyes rövidítések (Rövidítéseim), ajánlással.
+- Érthetőbb „Diktálás betanítása” szakaszonkénti visszajelzéssel és szavas minősítéssel.
+- Naptár: ütköző időpontok egymás mellett, ütközés-sáv és „Időpont-ütközés” teendő; azonos páciens átfedő időpontjánál összevonás egy időponttá; törlés és lemondás a szerkesztő ablakban és a karton Kezelések során, a tételek sorsának választásával.
+- Jóváhagyásra váró tájékoztatók az orvosnak, 7 napos határidővel, Archívummal; állapotjelzés a kartonon.
+- Beállítások → Klinika → Beosztás: alaprajz, orvosok és asszisztensek, recepció; a foglalás a beosztáshoz kötve, sürgős felülbírálással.
+- A Súgó és kézikönyv a Beállításokból érhető el; a fejléc rendelői adatsora megszűnt.
 
 ## 2.3
 
